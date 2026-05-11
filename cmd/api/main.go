@@ -62,6 +62,6 @@ func main() {
 	l.Info(ctx, "server ready", "port", port)
 	log.Printf("server listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		l.Fatal(ctx, "server error", "error", err)
+		log.Fatalf("server error: %v", err)
 	}
 }
