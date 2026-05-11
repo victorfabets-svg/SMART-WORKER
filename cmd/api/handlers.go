@@ -30,6 +30,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /memory/ingest", s.handleIngestMemory)
 	mux.HandleFunc("POST /agent/runtime", s.handleAgentRuntime)
 	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
+	mux.HandleFunc("POST /agent/bootstrap", s.handleBootstrap)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -541,4 +542,96 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "..."
+}
+
+type BootstrapRequest struct {
+	Agent          string `json:"agent"`
+	Task          string `json:"task"`
+	MaxContextChars int    `json:"max_context_chars"`
+}
+
+type BootstrapResponse struct {
+	SystemPrompt    string   `json:"system_prompt"`
+	RuntimeContext string   `json:"runtime_context"`
+	Sources      []Source `json:"sources"`
+}
+
+func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req BootstrapRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Agent == "" {
+		req.Agent = "openhands" // Default
+	}
+	if req.Task == "" {
+		req.Task = "operational context preparation"
+	}
+	if req.MaxContextChars == 0 {
+		req.MaxContextChars = 6000
+	}
+
+	// Retrieve governance-scored memory
+	results, err := s.repo.SearchMemory(r.Context(), req.Task, 15)
+	if err != nil {
+		log.Printf("bootstrap search error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Build deduplicated, prioritized context
+	var ctx strings.Builder
+	var sources []Source
+	seen := make(map[string]bool)
+
+	for _, res := range results {
+		if seen[res.Content] {
+			continue
+		}
+		seen[res.Content] = true
+
+		sources = append(sources, Source{
+			Type:    res.Type,
+			Title:  res.Title,
+			Content: res.Content,
+			Score: res.Score,
+		})
+
+		ctx.WriteString(fmt.Sprintf("[%s: %s]\n%s\n\n", strings.ToUpper(res.Type), res.Title, res.Content))
+
+		if ctx.Len() > req.MaxContextChars {
+			break
+		}
+	}
+
+	runtimeCtx := strings.TrimSpace(ctx.String())
+	if len(runtimeCtx) > req.MaxContextChars {
+		runtimeCtx = runtimeCtx[:req.MaxContextChars] + "\n..."
+	}
+
+	// Generate system prompt
+	systemPrompt := fmt.Sprintf(`You are operating as %s with access to project operational memory.
+
+IMPORTANT CONTEXT:
+%s
+
+Your task: %s
+
+Follow project conventions from operational memory. Check ADRs for architectural decisions, coding preferences for style rules, and mistakes to avoid repeating errors.`, req.Agent, runtimeCtx, req.Task)
+
+	resp := BootstrapResponse{
+		SystemPrompt:    systemPrompt,
+		RuntimeContext: runtimeCtx,
+		Sources:      sources,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
