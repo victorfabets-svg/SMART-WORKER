@@ -8,6 +8,7 @@ import (
 
 	"github.com/aoms/smart-worker/internal/config"
 	"github.com/aoms/smart-worker/internal/database"
+	"github.com/aoms/smart-worker/internal/embeddings"
 	"github.com/aoms/smart-worker/internal/logger"
 	"github.com/aoms/smart-worker/internal/memory"
 
@@ -39,8 +40,14 @@ func main() {
 	// Initialize memory repository
 	repo := memory.NewPostgresRepository(db.Conn())
 
+	// Initialize embeddings client
+	var embedder *embeddings.Client
+	if cfg.OpenAIAPIKey != "" {
+		embedder = embeddings.NewClient(cfg.OpenAIAPIKey)
+	}
+
 	// Initialize server
-	srv := NewServer(repo)
+	srv := NewServer(repo, embedder)
 
 	// Register routes
 	mux := http.NewServeMux()

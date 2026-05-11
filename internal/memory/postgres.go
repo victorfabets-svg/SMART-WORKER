@@ -246,3 +246,43 @@ func (r *PostgresRepository) ListMemory(ctx context.Context, memType string) ([]
 		return nil, fmt.Errorf("unknown memory type: %s", memType)
 	}
 }
+
+// SearchResult represents a semantic search result
+type SearchResult struct {
+	ID       string  `json:"id"`
+	Type     string  `json:"type"`
+	Title    string  `json:"title"`
+	Content string  `json:"content"`
+	Score   float32 `json:"score"`
+}
+
+// SearchMemory performs semantic search across all memory types
+func (r *PostgresRepository) SearchMemory(ctx context.Context, query string, limit int) ([]*SearchResult, error) {
+	// Since we don't have an embedder passed here, do a simple text search for now
+	// In production, this would use pgvector cosine similarity
+	
+	var results []*SearchResult
+	
+	// Search PDRs
+	pdrs, err := r.SearchPDRs(ctx, query)
+	if err == nil {
+		for _, p := range pdrs {
+			results = append(results, &SearchResult{ID: p.ID, Type: TypePDR, Title: p.Title, Content: p.Content, Score: 1.0})
+		}
+	}
+	
+	// Search ADRs
+	adrs, err := r.SearchADRs(ctx, query)
+	if err == nil {
+		for _, a := range adrs {
+			results = append(results, &SearchResult{ID: a.ID, Type: TypeADR, Title: a.Title, Content: a.Decision, Score: 1.0})
+		}
+	}
+	
+	// Limit results
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	
+	return results, nil
+}

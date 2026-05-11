@@ -2,25 +2,29 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 
+	"github.com/aoms/smart-worker/internal/embeddings"
 	"github.com/aoms/smart-worker/internal/memory"
 )
 
 type Server struct {
-	repo *memory.PostgresRepository
+	repo     *memory.PostgresRepository
+	embedder *embeddings.Client
 }
 
-func NewServer(repo *memory.PostgresRepository) *Server {
-	return &Server{repo: repo}
+func NewServer(repo *memory.PostgresRepository, embedder *embeddings.Client) *Server {
+	return &Server{repo: repo, embedder: embedder}
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /memory", s.handleCreateMemory)
 	mux.HandleFunc("GET /memory", s.handleListMemory)
 	mux.HandleFunc("GET /memory/", s.handleGetMemory)
+	mux.HandleFunc("GET /memory/search", s.handleSearch)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -113,4 +117,32 @@ func (s *Server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entry)
+}
+
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		http.Error(w, "q query param required", http.StatusBadRequest)
+		return
+	}
+
+	limit := 5
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	results, err := s.repo.SearchMemory(r.Context(), query, limit)
+	if err != nil {
+		log.Printf("search error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }
