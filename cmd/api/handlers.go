@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -28,6 +29,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /context/build", s.handleBuildContext)
 	mux.HandleFunc("POST /memory/ingest", s.handleIngestMemory)
 	mux.HandleFunc("POST /agent/runtime", s.handleAgentRuntime)
+	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -401,4 +403,142 @@ func (s *Server) handleAgentRuntime(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	eventType := r.Header.Get("X-GitHub-Event")
+	if eventType == "" {
+		eventType = "push"
+	}
+
+	// Process based on event type
+	switch eventType {
+	case "push":
+		s.processPushEvent(payload)
+	case "pull_request":
+		s.processPREvent(payload)
+	case "issues":
+		s.processIssueEvent(payload)
+	default:
+		log.Printf("unsupported event: %s", eventType)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "processed"})
+}
+
+func (s *Server) processPushEvent(payload map[string]interface{}) {
+	commits, ok := payload["commits"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, c := range commits {
+		commit, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		msg, _ := commit["message"].(string)
+		if msg == "" {
+			continue
+		}
+
+		// Classify memory type
+		memType := classifyMessage(msg)
+
+		s.repo.CreateMemory(context.Background(), &memory.MemoryEntry{
+			Type:    memType,
+			Title:   "Commit: " + truncate(msg, 50),
+			Content: msg,
+		})
+	}
+}
+
+func (s *Server) processPREvent(payload map[string]interface{}) {
+	pr, ok := payload["pull_request"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	title, _ := pr["title"].(string)
+	body, _ := pr["body"].(string)
+	action, _ := pr["action"].(string)
+
+	if title == "" {
+		return
+	}
+
+	content := title
+	if body != "" {
+		content += "\n\n" + body
+	}
+
+	s.repo.CreateMemory(context.Background(), &memory.MemoryEntry{
+		Type:    "adr",
+		Title:  fmt.Sprintf("PR %s: %s", action, truncate(title, 50)),
+		Content: content,
+	})
+}
+
+func (s *Server) processIssueEvent(payload map[string]interface{}) {
+	issue, ok := payload["issue"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	title, _ := issue["title"].(string)
+	body, _ := issue["body"].(string)
+	action, _ := issue["action"].(string)
+
+	if title == "" {
+		return
+	}
+
+	content := title
+	if body != "" {
+		content += "\n\n" + body
+	}
+
+	s.repo.CreateMemory(context.Background(), &memory.MemoryEntry{
+		Type:    "mistake",
+		Title:  fmt.Sprintf("Issue %s: %s", action, truncate(title, 50)),
+		Content: content,
+	})
+}
+
+func classifyMessage(msg string) string {
+	msgLower := strings.ToLower(msg)
+	if strings.Contains(msgLower, "fix") || strings.Contains(msgLower, "bug") || strings.Contains(msgLower, "hotfix") {
+		return "mistake"
+	}
+	if strings.Contains(msgLower, "decision") || strings.Contains(msgLower, "decide") {
+		return "adr"
+	}
+	if strings.Contains(msgLower, "decision") || strings.Contains(msgLower, "refactor") {
+		return "adr"
+	}
+	if strings.Contains(msgLower, "sprint") {
+		return "sprint"
+	}
+	return "operational"
+}
+
+func truncate(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
