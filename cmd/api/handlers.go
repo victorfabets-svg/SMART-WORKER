@@ -26,6 +26,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /memory/", s.handleGetMemory)
 	mux.HandleFunc("GET /memory/search", s.handleSearch)
 	mux.HandleFunc("POST /context/build", s.handleBuildContext)
+	mux.HandleFunc("POST /memory/ingest", s.handleIngestMemory)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +216,87 @@ func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
 		Query:   req.Query,
 		Context: strings.TrimSpace(context.String()),
 		Sources: sources,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+type IngestRequest struct {
+	Type    string   `json:"type"`
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Tags   []string `json:"tags"`
+}
+
+type IngestResponse struct {
+	ID       string   `json:"id"`
+	Type     string   `json:"type"`
+	Title    string   `json:"title"`
+	Ingested bool     `json:"ingested"`
+}
+
+func (s *Server) handleIngestMemory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req IngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate input
+	if req.Type == "" {
+		http.Error(w, "type is required", http.StatusBadRequest)
+		return
+	}
+	if req.Title == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	// Normalize: trim whitespace
+	req.Title = strings.TrimSpace(req.Title)
+	req.Content = strings.TrimSpace(req.Content)
+
+	// Normalize tags
+	if req.Tags == nil {
+		req.Tags = []string{}
+	}
+
+	// Store memory
+	entry := &memory.MemoryEntry{
+		Type:    req.Type,
+		Title:   req.Title,
+		Content: req.Content,
+	}
+
+	if err := s.repo.CreateMemory(r.Context(), entry); err != nil {
+		log.Printf("ingest error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate embedding if embedder is available
+	if s.embedder != nil {
+		text := req.Title + "\n" + req.Content
+		if _, err := s.embedder.Generate(r.Context(), text); err != nil {
+			log.Printf("embedding error: %v", err)
+		}
+	}
+
+	resp := IngestResponse{
+		ID:       entry.ID,
+		Type:     entry.Type,
+		Title:    entry.Title,
+		Ingested: true,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
