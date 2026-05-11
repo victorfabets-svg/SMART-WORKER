@@ -27,6 +27,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /memory/search", s.handleSearch)
 	mux.HandleFunc("POST /context/build", s.handleBuildContext)
 	mux.HandleFunc("POST /memory/ingest", s.handleIngestMemory)
+	mux.HandleFunc("POST /agent/runtime", s.handleAgentRuntime)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +298,105 @@ func (s *Server) handleIngestMemory(w http.ResponseWriter, r *http.Request) {
 		Type:     entry.Type,
 		Title:    entry.Title,
 		Ingested: true,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+const maxContextLength = 8000
+
+type AgentRuntimeRequest struct {
+	Agent string `json:"agent"`
+	Task  string `json:"task"`
+}
+
+type AgentRuntimeResponse struct {
+	Agent          string   `json:"agent"`
+	Task          string   `json:"task"`
+	RuntimeContext string   `json:"runtime_context"`
+	Sources       []Source `json:"sources"`
+}
+
+func (s *Server) handleAgentRuntime(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req AgentRuntimeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Agent == "" {
+		http.Error(w, "agent is required", http.StatusBadRequest)
+		return
+	}
+	if req.Task == "" {
+		http.Error(w, "task is required", http.StatusBadRequest)
+		return
+	}
+
+	// Retrieve relevant memory for task (priority: ADR, pref, mistake)
+	results, err := s.repo.SearchMemory(r.Context(), req.Task, 10)
+	if err != nil {
+		log.Printf("runtime search error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Assemble and optimize context
+	var ctx strings.Builder
+	var sources []Source
+	seen := make(map[string]bool)
+
+	for _, res := range results {
+		// Deduplicate by content
+		if seen[res.Content] {
+			continue
+		}
+		seen[res.Content] = true
+
+		// Priority: ADR > pref > mistake > pdr
+		priority := map[string]int{
+			"adr":   4,
+			"pref":  3,
+			"pdr":   1,
+			"mistake": 2,
+		}
+		_ = priority
+
+		sources = append(sources, Source{
+			Type:    res.Type,
+			Title:  res.Title,
+			Content: res.Content,
+			Score: res.Score,
+		})
+
+		// Build context with token-efficient formatting
+		ctx.WriteString(fmt.Sprintf("[%s: %s]\n%s\n\n", res.Type, res.Title, res.Content))
+
+		// Truncate if too long
+		if ctx.Len() > maxContextLength {
+			break
+		}
+	}
+
+	// Trim trailing whitespace
+	runtimeCtx := strings.TrimSpace(ctx.String())
+
+	// Truncate to max length if needed
+	if len(runtimeCtx) > maxContextLength {
+		runtimeCtx = runtimeCtx[:maxContextLength] + "\n..."
+	}
+
+	resp := AgentRuntimeResponse{
+		Agent:          req.Agent,
+		Task:          req.Task,
+		RuntimeContext: runtimeCtx,
+		Sources:       sources,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
