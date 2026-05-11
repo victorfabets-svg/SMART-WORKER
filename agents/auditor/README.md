@@ -36,6 +36,7 @@ Structured findings in JSON format:
 
 ## SMART-WORKER Integration
 
+- **Target Repository**: Configured via `config.json` or `TARGET_REPO` env var
 - **Memory Endpoint**: `http://localhost:8080/memory/ingest`
 - **Bootstrap Endpoint**: `http://localhost:8080/agent/bootstrap`
 - **Config**: See `config.json`
@@ -43,8 +44,12 @@ Structured findings in JSON format:
 ## Usage
 
 ```bash
+# Default - uses config.json target
 cd agents/auditor
 ./run.sh
+
+# Override target via environment
+TARGET_REPO=/path/to/repo ./run.sh
 ```
 
 ## Constraints

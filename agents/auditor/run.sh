@@ -8,24 +8,25 @@ set -e
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 FINDINGS_FILE="/tmp/auditor_findings_$(date +%s).json"
 
-# Load configuration
+# Load configuration - defaults
+TARGET_REPO="${TARGET_REPO:-/workspaces/BEATSET}"
 MEMORY_ENDPOINT="${MEMORY_ENDPOINT:-http://localhost:8080/memory/ingest}"
 BOOTSTRAP_ENDPOINT="${BOOTSTRAP_ENDPOINT:-http://localhost:8080/agent/bootstrap}"
 MAX_FINDINGS=20
 
 if [ -f "$CONFIG_FILE" ]; then
+    TARGET_REPO=$(grep -o '"target_repo": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
     MEMORY_ENDPOINT=$(grep -o '"memory_endpoint": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
     BOOTSTRAP_ENDPOINT=$(grep -o '"bootstrap_endpoint": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
     MAX_FINDINGS=$(grep -o '"max_findings_per_run": *[0-9]*' "$CONFIG_FILE" | grep -o '[0-9]*')
 fi
 
 echo "[AUDITOR] Starting BEATSET audit..."
-echo "[AUDITOR] Repository: $REPO_ROOT"
+echo "[AUDITOR] Target repository: $TARGET_REPO"
 echo "[AUDITOR] Memory endpoint: $MEMORY_ENDPOINT"
 echo "[AUDITOR] Max findings: $MAX_FINDINGS"
 
@@ -54,9 +55,9 @@ FINDINGS="[]"
 
 # --- AUDIT: Repository Structure ---
 echo "[AUDITOR] Inspecting repository structure..."
-if [ -d "$REPO_ROOT/cmd" ]; then
+if [ -d "$TARGET_REPO/cmd" ]; then
     # Check for missing main.go in cmd directories
-    for dir in "$REPO_ROOT"/cmd/*/; do
+    for dir in "$TARGET_REPO"/cmd/*/; do
         if [ -d "$dir" ] && [ ! -f "$dir/main.go" ]; then
             FINDINGS=$(echo "$FINDINGS" | jq --arg p "$dir" \
                 '. += [{"type":"violation","severity":"low","title":"Missing main.go in cmd directory","content":"Command directory missing entry point","evidence":$p,"recommended_fix":"Add main.go or verify correct structure"}]')
@@ -66,7 +67,7 @@ fi
 
 # --- AUDIT: Go Runtime ---
 echo "[AUDITOR] Inspecting Go runtime..."
-cd "$REPO_ROOT"
+cd "$TARGET_REPO"
 
 # Check for compilation errors
 if command -v go >/dev/null 2>&1; then
@@ -95,14 +96,14 @@ while IFS= read -r -d '' file; do
                 '. += [{"type":"risk","severity":"medium","title":"Potential nil pointer dereference","content":"Method called without nil check","evidence":$f,"recommended_fix":"Add nil check before method call"}]')
         fi
     fi
-done < <(find "$REPO_ROOT" -name "*.go" -type f -print0 2>/dev/null)
+done < <(find "$TARGET_REPO" -name "*.go" -type f -print0 2>/dev/null)
 
 # --- AUDIT: Dead Code ---
 echo "[AUDITOR] Checking for dead code..."
 
 # Find unused functions
 if command -v go >/dev/null 2>&1; then
-    for pkg in "$REPO_ROOT"/internal/*/; do
+    for pkg in "$TARGET_REPO"/internal/*/; do
         if [ -d "$pkg" ]; then
             PKG_NAME=$(basename "$pkg")
             UNUSED=$(go build -v ./... 2>&1 | grep -i "unused" || true)
@@ -130,14 +131,14 @@ while IFS= read -r -d '' file; do
         FINDINGS=$(echo "$FINDINGS" | jq --arg f "$file" \
             '. += [{"type":"risk","severity":"critical","title":"Hardcoded API key detected","content":"API key found in source code","evidence":$f,"recommended_fix":"Move to environment variables"}]')
     fi
-done < <(find "$REPO_ROOT" -name "*.go" -type f -print0 2>/dev/null)
+done < <(find "$TARGET_REPO" -name "*.go" -type f -print0 2>/dev/null)
 
 # --- AUDIT: CI/CD ---
 echo "[AUDITOR] Inspecting CI/CD..."
 
-if [ -d "$REPO_ROOT/.github" ]; then
+if [ -d "$TARGET_REPO/.github" ]; then
     # Check for workflow issues
-    for wf in "$REPO_ROOT/.github/workflows/"*.yml "$REPO_ROOT/.github/workflows/"*.yaml; do
+    for wf in "$TARGET_REPO/.github/workflows/"*.yml "$TARGET_REPO/.github/workflows/"*.yaml; do
         if [ -f "$wf" ]; then
             # Check for missing 'on' trigger
             if ! grep -q '^on:' "$wf" 2>/dev/null; then
@@ -152,21 +153,21 @@ fi
 echo "[AUDITOR] Checking operational inconsistencies..."
 
 # Check .env.example vs actual usage
-if [ -f "$REPO_ROOT/.env.example" ]; then
+if [ -f "$TARGET_REPO/.env.example" ]; then
     # Check if required env vars are documented
     while IFS= read -r -d '' file; do
         if grep -qE 'os.Getenv\(' "$file" 2>/dev/null; then
             ENV_VARS=$(grep -oE 'os.Getenv\("[^"]+"' "$file" | cut -d'"' -f2 || true)
             if [ -n "$ENV_VARS" ]; then
                 for var in $ENV_VARS; do
-                    if ! grep -q "$var" "$REPO_ROOT/.env.example" 2>/dev/null; then
+                    if ! grep -q "$var" "$TARGET_REPO/.env.example" 2>/dev/null; then
                         FINDINGS=$(echo "$FINDINGS" | jq --arg v "$var" --arg f "$file" \
                             '. += [{"type":"inconsistency","severity":"medium","title":"Undocumented environment variable","content":"Variable used but not in .env.example","evidence":$v,"recommended_fix":"Add to .env.example"}]')
                     fi
                 done
             fi
         fi
-    done < <(find "$REPO_ROOT" -name "*.go" -type f -print0 2>/dev/null)
+    done < <(find "$TARGET_REPO" -name "*.go" -type f -print0 2>/dev/null)
 fi
 
 # --- Limit findings ---
