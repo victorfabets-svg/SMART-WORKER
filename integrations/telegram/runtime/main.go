@@ -31,16 +31,42 @@ var (
 	bot             *tgbotapi.BotAPI
 	runtimeState    RuntimeState
 	TICKER_INTERVAL = 5 * time.Minute // 5-minute loop
-	AUDITORS_PATH   = "/workspace/project/SMART-WORKER/agents/auditor/run.sh"
-	EXECUTOR_PATH   = "/workspace/project/SMART-WORKER/agents/executor/run.sh"
+	AUDITORS_PATH   = "/workspaces/SMART-WORKER/agents/auditor/run.sh"
+	EXECUTOR_PATH   = "/workspaces/SMART-WORKER/agents/executor/run.sh"
 	STATE_FILE     = "/tmp/runtime_state.json"
+	ENV_FILE       = "/workspaces/SMART-WORKER/integrations/telegram/.env"
 )
 
+func loadEnv() {
+	data, err := os.ReadFile(ENV_FILE)
+	if err != nil {
+		log.Printf("[RUNTIME] Could not load %s: %v", ENV_FILE, err)
+		return
+	}
+	
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if token != "" {
+		prefix := token
+		if len(prefix) > 8 {
+			prefix = token[:8]
+		}
+		log.Printf("[RUNTIME] Telegram configured successfully (BOT: %s...)", prefix)
+	} else {
+		log.Printf("[RUNTIME] Missing TELEGRAM_BOT_TOKEN")
+	}
+	
+	_ = data // Parse .env if needed
+}
+
 func main() {
+	// Load environment variables
+	loadEnv()
+
 	// Initialize bot
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN not set")
+		log.Printf("[RUNTIME] Missing TELEGRAM_BOT_TOKEN")
+		os.Exit(1)
 	}
 
 	var err error

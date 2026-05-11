@@ -12,16 +12,39 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_DIR="$(dirname "$SCRIPT_DIR")"
-AUDITOR_SCRIPT="$SCRIPT_DIR/../auditor/run.sh"
-EXECUTOR_SCRIPT="$SCRIPT_DIR/../executor/run.sh"
+SCRIPT_DIR="/workspaces/SMART-WORKER/integrations/telegram/runtime"
+RUNTIME_DIR="/workspaces/SMART-WORKER"
+AUDITOR_SCRIPT="/workspaces/SMART-WORKER/agents/auditor/run.sh"
+EXECUTOR_SCRIPT="/workspaces/SMART-WORKER/agents/executor/run.sh"
 STATE_FILE="/tmp/runtime_state.json"
 PID_FILE="/tmp/runtime.pid"
 LOG_FILE="/tmp/runtime.log"
 
+# Load environment
+ENV_FILE="/workspaces/SMART-WORKER/integrations/telegram/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    source "$ENV_FILE"
+    set +a
+fi
+
 TICKER_INTERVAL=300  # 5 minutes in seconds
 FINDINGS_DIR="/tmp"
+
+# Validate configuration
+log_validate() {
+    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+        log "Telegram configured successfully (BOT: ${TELEGRAM_BOT_TOKEN:0:8}...)"
+    else
+        log "Telegram not fully configured - notifications disabled"
+        [ -z "$TELEGRAM_BOT_TOKEN" ] && log "Missing TELEGRAM_BOT_TOKEN"
+        [ -z "$TELEGRAM_CHAT_ID" ] && log "Missing TELEGRAM_CHAT_ID"
+    fi
+    
+    if [ -n "$SMART_WORKER_URL" ]; then
+        log "SMART_WORKER_URL: $SMART_WORKER_URL"
+    fi
+}
 
 log() {
     echo "[RUNTIME] $(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
@@ -196,6 +219,7 @@ Severity: ${severity} | Risk: ${risk}
 
 runtime_loop() {
     log "Starting continuous runtime loop (every ${TICKER_INTERVAL}s)..."
+    log_validate()
     
     echo $$ > "$PID_FILE"
     
