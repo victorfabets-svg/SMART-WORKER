@@ -1,0 +1,7 @@
+{
+  "agent": "auditor",
+  "mode": "readonly",
+  "memory_endpoint": "http://localhost:8080/memory/ingest",
+  "bootstrap_endpoint": "http://localhost:8080/agent/bootstrap",
+  "max_findings_per_run": 20
+}
