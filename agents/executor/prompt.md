@@ -143,7 +143,34 @@ Generate execution report based on risk level:
 ## Constraints
 
 - Max files per fix: 3
+- Max lines per fix: 120
 - Auto-fix only for LOW risk categories
 - Always classify BEFORE acting
 - Preservation over modification
 - Safety over autonomy
+
+## Safety Additions
+
+### Branch Isolation
+- **NEVER commit directly to main**
+- Create isolated branch: `executor/fix-<timestamp>`
+- Example: `executor/fix-20260511-2034`
+
+### Rollback Safety
+- Before ANY change: `git diff` → save to `/tmp/executor_rollback_<timestamp>.diff`
+- Enables quick recovery
+- Provides audit trail
+
+### Change Limit
+- **MAX 120 lines** changed per fix
+- If exceeded: operation aborts, classified as HIGH risk
+- No commit allowed if over limit
+
+### Abort Conditions
+Operation MUST abort if:
+- Branch is `main`
+- > 3 files modified
+- > 120 lines changed
+- Build fails
+- Protected keywords detected (auth, payment, infra)
+- Runtime core touched

@@ -5,6 +5,7 @@
   "memory_endpoint": "http://localhost:8080/memory/ingest",
   "bootstrap_endpoint": "http://localhost:8080/agent/bootstrap",
   "max_files_per_fix": 3,
+  "max_lines_changed": 120,
   "auto_fix_allowed": [
     "lint",
     "imports",

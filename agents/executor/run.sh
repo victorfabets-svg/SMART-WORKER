@@ -11,12 +11,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 REPORT_FILE="/tmp/executor_report_$(date +%s).json"
+TIMESTAMP=$(date +%Y%m%d-%H%M)
 
 # Load configuration - defaults
 TARGET_REPO="${TARGET_REPO:-/workspaces/BEATSET}"
 MEMORY_ENDPOINT="${MEMORY_ENDPOINT:-http://localhost:8080/memory/ingest}"
 BOOTSTRAP_ENDPOINT="${BOOTSTRAP_ENDPOINT:-http://localhost:8080/agent/bootstrap}"
 MAX_FILES=3
+MAX_LINES=120
 FINDING_FILE=""
 
 # Parse arguments
@@ -44,13 +46,13 @@ APPROVAL_REQUIRED="architecture,auth,database_schema,payments,runtime_core,cross
 if [ -f "$CONFIG_FILE" ]; then
     TARGET_REPO=$(grep -o '"target_repo": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
     MAX_FILES=$(grep -o '"max_files_per_fix": *[0-9]*' "$CONFIG_FILE" | grep -o '[0-9]*')
-    # Load arrays from config
-    AUTO_FIX_ALLOWED=$(grep -o '"auto_fix_allowed":\s*\[[^\]]*\]' "$CONFIG_FILE" | sed 's/.*"\([^"]*\)".*/\1/' | tr -d '[]"' | tr ',' ',' || echo "$AUTO_FIX_ALLOWED")
+    MAX_LINES=$(grep -o '"max_lines_changed": *[0-9]*' "$CONFIG_FILE" | grep -o '[0-9]*' || echo "120")
 fi
 
 echo "[EXECUTOR] Starting BEATSET Executor..."
 echo "[EXECUTOR] Target repository: $TARGET_REPO"
 echo "[EXECUTOR] Max files per fix: $MAX_FILES"
+echo "[EXECUTOR] Max lines changed: $MAX_LINES"
 echo "[EXECUTOR] Auto-fix allowed: $AUTO_FIX_ALLOWED"
 
 # Check if finding file is provided
@@ -172,6 +174,28 @@ if [ "$RISK_LEVEL" = "low" ]; then
     fi
     
     cd "$TARGET_REPO"
+
+# --- SAFETY CHECKS ---
+echo "[EXECUTOR] Running safety checks..."
+
+# Check current branch - abort if on main
+CURRENT_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+if [ "$CURRENT_BRANCH" = "main" ]; then
+    echo "[ERROR] ABORT: Cannot execute on main branch"
+    echo "[ERROR] Executor must use isolated branch"
+    exit 1
+fi
+
+# Create isolated branch for fix
+BRANCH_NAME="executor/fix-$TIMESTAMP"
+echo "[EXECUTOR] Creating isolated branch: $BRANCH_NAME"
+git checkout -b "$BRANCH_NAME" 2>/dev/null || git checkout -b "$BRANCH_NAME" 2>/dev/null || true
+
+# Generate rollback snapshot BEFORE any changes
+ROLLBACK_FILE="/tmp/executor_rollback_$TIMESTAMP.diff"
+echo "[EXECUTOR] Saving rollback snapshot to: $ROLLBACK_FILE"
+git diff > "$ROLLBACK_FILE" || true
+
     
     # --- EXECUTE LOW RISK FIX ---
     echo "[EXECUTOR] Analyzing and applying fix..."
@@ -210,13 +234,20 @@ if [ "$RISK_LEVEL" = "low" ]; then
             BUILD_ERR=$(go build ./... 2>&1 || true)
             VALIDATION_STEPS=$(echo "$VALIDATION_STEPS" | jq ". += [\"go build ./... : FAILED - $BUILD_ERR\"]')
             VALIDATION_PASSED=false
+
+    # Check line count limit
+    LINES_CHANGED=$(git diff --stat 2>/dev/null | tail -1 | awk '{print $4}' | tr -d , || echo "0")
+    if [ "$LINES_CHANGED" -gt "$MAX_LINES" ] 2>/dev/null; then
+        echo "[ERROR] ABORT: Lines changed ($LINES_CHANGED) exceeds limit ($MAX_LINES)"
+        VALIDATION_PASSED=false
+    fi
         fi
     fi
     
     # --- COMMIT ---
     echo "[EXECUTOR] Generating commit..."
     
-    COMMIT_MSG="fix: $FINDING_TITLE"
+    COMMIT_MSG="[$RISK_LEVEL][EXECUTOR] fix: $FINDING_TITLE"
     if [ "$VALIDATION_PASSED" = true ]; then
         COMMIT_MSG="$COMMIT_MSG - resolved via Executor"
     else

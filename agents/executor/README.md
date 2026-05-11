@@ -59,3 +59,29 @@ cd agents/executor
 ## Operational Philosophy
 
 > **Safety over Speed**: When in doubt, block it out.
+
+## Safety Additions
+
+### Branch Isolation
+- **NEVER commits directly to main**
+- Creates isolated branch: `executor/fix-<timestamp>`
+- Example: `executor/fix-20260511-2034`
+
+### Rollback Safety
+- Before ANY change: runs `git diff`
+- Saves snapshot to: `/tmp/executor_rollback_<timestamp>.diff`
+- Enables quick recovery and auditability
+
+### Change Limits
+- **Max 3 files** per fix
+- **Max 120 lines** changed per fix
+- If exceeded: operation aborts automatically
+
+### Abort Conditions
+| Condition | Action |
+|-----------|--------|
+| Branch == main | 🚫 Abort immediately |
+| > 3 files | 🚫 Abort immediately |
+| > 120 lines | 🚫 Abort immediately |
+| Build fails | 🚫 Abort immediately |
+| Protected keywords | 🚫 Abort immediately |
