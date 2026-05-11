@@ -4,5 +4,24 @@
   "target_repo": "/workspaces/BEATSET",
   "memory_endpoint": "http://localhost:8080/memory/ingest",
   "bootstrap_endpoint": "http://localhost:8080/agent/bootstrap",
-  "max_files_per_fix": 10
+  "max_files_per_fix": 3,
+  "auto_fix_allowed": [
+    "lint",
+    "imports",
+    "unused_variables",
+    "isolated_dead_code",
+    "small_nil_safety",
+    "log_consistency",
+    "minor_build_fix"
+  ],
+  "approval_required": [
+    "architecture",
+    "auth",
+    "database_schema",
+    "payments",
+    "runtime_core",
+    "cross_module_refactor",
+    "infra",
+    "mass_delete"
+  ]
 }
