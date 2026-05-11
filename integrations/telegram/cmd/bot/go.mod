@@ -7,4 +7,4 @@ require (
 	github.com/sashabaranov/go-openai v1.14.0
 )
 
-replace SMART-WORKER => /workspaces/SMART-WORKER
+replace SMART-WORKER => /workspace/project/SMART-WORKER

@@ -31,10 +31,10 @@ var (
 	bot             *tgbotapi.BotAPI
 	runtimeState    RuntimeState
 	TICKER_INTERVAL = 5 * time.Minute // 5-minute loop
-	AUDITORS_PATH   = "/workspaces/SMART-WORKER/agents/auditor/run.sh"
-	EXECUTOR_PATH   = "/workspaces/SMART-WORKER/agents/executor/run.sh"
+	AUDITORS_PATH   = "/workspace/project/SMART-WORKER/agents/auditor/run.sh"
+	EXECUTOR_PATH   = "/workspace/project/SMART-WORKER/agents/executor/run.sh"
 	STATE_FILE     = "/tmp/runtime_state.json"
-	ENV_FILE       = "/workspaces/SMART-WORKER/integrations/telegram/.env"
+	ENV_FILE       = "/workspace/project/SMART-WORKER/integrations/telegram/.env"
 )
 
 func loadEnv() {
@@ -84,14 +84,13 @@ func main() {
 	}
 	loadState()
 
-	// Start continuous loop in background
+	// Start continuous loop - THIS IS THE RUNTIME LOOP
+	// Note: We no longer poll for updates here to avoid consuming them
+	// The conversational bot (cmd/bot) handles incoming messages
 	go runContinuousLoop()
 
-	// Set up webhook/commands
-	updates := bot.GetUpdatesChan(nil)
-	for update := range updates {
-		handleUpdate(update)
-	}
+	// Keep the process running indefinitely
+	select {}
 }
 
 func runContinuousLoop() {

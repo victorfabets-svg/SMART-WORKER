@@ -3,10 +3,10 @@
 # BEATSET Continuous Runtime
 # Persistent operational loop for SMART-WORKER agents
 
-SCRIPT_DIR="/workspaces/SMART-WORKER/integrations/telegram/runtime"
-RUNTIME_DIR="/workspaces/SMART-WORKER"
-AUDITOR_SCRIPT="/workspaces/SMART-WORKER/agents/auditor/run.sh"
-EXECUTOR_SCRIPT="/workspaces/SMART-WORKER/agents/executor/run.sh"
+SCRIPT_DIR="/workspace/project/SMART-WORKER/integrations/telegram/runtime"
+RUNTIME_DIR="/workspace/project/SMART-WORKER"
+AUDITOR_SCRIPT="/workspace/project/SMART-WORKER/agents/auditor/run.sh"
+EXECUTOR_SCRIPT="/workspace/project/SMART-WORKER/agents/executor/run.sh"
 STATE_FILE="/tmp/runtime_state.json"
 PID_FILE="/tmp/runtime.pid"
 LOG_FILE="/tmp/runtime.log"
@@ -14,7 +14,7 @@ TICKER_INTERVAL=300
 FINDINGS_DIR="/tmp"
 
 # Load environment
-ENV_FILE="/workspaces/SMART-WORKER/integrations/telegram/.env"
+ENV_FILE="/workspace/project/SMART-WORKER/integrations/telegram/.env"
 if [ -f "$ENV_FILE" ]; then
   while IFS="=" read -r key value; do
     [[ -z "$key" ]] && continue
