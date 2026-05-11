@@ -1,0 +1,8 @@
+{
+  "agent": "executor",
+  "mode": "write",
+  "target_repo": "/workspaces/BEATSET",
+  "memory_endpoint": "http://localhost:8080/memory/ingest",
+  "bootstrap_endpoint": "http://localhost:8080/agent/bootstrap",
+  "max_files_per_fix": 10
+}
