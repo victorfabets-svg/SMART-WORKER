@@ -15,23 +15,23 @@ func New(level string) *Logger {
 }
 
 func (l *Logger) Debug(ctx context.Context, msg string, keyvals ...interface{}) {
-	l.log("DEBUG", msg, keyvals...)
+	l.log("DEBUG", msg, keyvals)
 }
 
 func (l *Logger) Info(ctx context.Context, msg string, keyvals ...interface{}) {
-	l.log("INFO", msg, keyvals...)
+	l.log("INFO", msg, keyvals)
 }
 
 func (l *Logger) Warn(ctx context.Context, msg string, keyvals ...interface{}) {
-	l.log("WARN", msg, keyvals...)
+	l.log("WARN", msg, keyvals)
 }
 
 func (l *Logger) Error(ctx context.Context, msg string, keyvals ...interface{}) {
-	l.log("ERROR", msg, keyvals...)
+	l.log("ERROR", msg, keyvals)
 }
 
 func (l *Logger) Fatal(ctx context.Context, msg string, keyvals ...interface{}) {
-	l.log("FATAL", msg, keyvals...)
+	l.log("FATAL", msg, keyvals)
 }
 
 func (l *Logger) log(level, msg string, keyvals []interface{}) {
