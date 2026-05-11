@@ -57,3 +57,8 @@ func (db *DB) QueryRowContext(ctx context.Context, query string, args ...interfa
 	}
 	return db.conn.QueryRowContext(ctx, query, args...)
 }
+
+// Conn returns the underlying SQL connection
+func (db *DB) Conn() *sql.DB {
+	return db.conn
+}

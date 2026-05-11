@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/aoms/smart-worker/internal/config"
 	"github.com/aoms/smart-worker/internal/database"
 	"github.com/aoms/smart-worker/internal/logger"
+	"github.com/aoms/smart-worker/internal/memory"
+
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -20,26 +24,37 @@ func main() {
 	}
 
 	// Initialize logger
-	log := logger.New(cfg.LogLevel)
-	log.Info(ctx, "starting AOMS server")
+	l := logger.New(cfg.LogLevel)
+	l.Info(ctx, "starting AOMS server")
 
 	// Initialize database connection
 	db, err := database.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatal(ctx, "failed to connect to database", "error", err)
+		l.Fatal(ctx, "failed to connect to database", "error", err)
 	}
 	defer db.Close()
 
-	log.Info(ctx, "database connected successfully")
+	l.Info(ctx, "database connected successfully")
 
-	// Server would be started here in implementation phase
-	// For now, this is infrastructure skeleton only
+	// Initialize memory repository
+	repo := memory.NewPostgresRepository(db.Conn())
 
+	// Initialize server
+	srv := NewServer(repo)
+
+	// Register routes
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+
+	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	log.Info(ctx, "server ready", "port", port)
-	log.Info(ctx, "AOMS infrastructure initialized")
+	l.Info(ctx, "server ready", "port", port)
+	log.Printf("server listening on :%s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		l.Fatal(ctx, "server error", "error", err)
+	}
 }
