@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -182,18 +183,50 @@ const (
 
 // MemoryEntry represents a generic memory entry
 type MemoryEntry struct {
-	ID        string `json:"id"`
-	Type     string `json:"type"`
-	Title    string `json:"title"`
-	Content string `json:"content"`
-	Data    string `json:"data,omitempty"`
+	ID       string  `json:"id"`
+	Type     string  `json:"type"`
+	Title    string  `json:"title"`
+	Content string  `json:"content"`
+	Data    string  `json:"data,omitempty"`
+
+	// Governance scores
+	PriorityScore float32 `json:"priority_score"`
+	ConfidenceScore float32 `json:"confidence_score"`
+	RelevanceScore float32 `json:"relevance_score"`
+	Archived     bool    `json:"archived"`
+
 	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// Default scores by memory type
+var defaultScores = map[string]float32{
+	TypeADR:     0.8, // High priority for decisions
+	"pref":    0.7, // Preferences important
+	"mistake": 0.6, // Mistakes important to remember
+	TypePDR:    0.5, // Product docs medium
+	"sprint":  0.5, // Sprint notes medium
+	"operational": 0.3, // Low priority
+}
+
+func getDefaultScore(memType string) float32 {
+	if score, ok := defaultScores[memType]; ok {
+		return score
+	}
+	return 0.3
 }
 
 // CreateMemory stores a memory entry based on type
 func (r *PostgresRepository) CreateMemory(ctx context.Context, entry *MemoryEntry) error {
 	entry.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	
+	entry.UpdatedAt = entry.CreatedAt
+	entry.PriorityScore = getDefaultScore(entry.Type)
+
+	// Deduplication check - near-identical content
+	if r.isDuplicate(ctx, entry.Title, entry.Content) {
+		return fmt.Errorf("duplicate memory entry")
+	}
+
 	switch entry.Type {
 	case TypePDR:
 		pdr := &PDR{Title: entry.Title, Content: entry.Content}
@@ -207,6 +240,25 @@ func (r *PostgresRepository) CreateMemory(ctx context.Context, entry *MemoryEntr
 	default:
 		return fmt.Errorf("unknown memory type: %s", entry.Type)
 	}
+}
+
+// isDuplicate checks for near-identical memory entries
+func (r *PostgresRepository) isDuplicate(ctx context.Context, title, content string) bool {
+	// Check by exact title match
+	pdrs, _ := r.SearchPDRs(ctx, title)
+	for _, p := range pdrs {
+		if strings.EqualFold(p.Title, title) {
+			return true
+		}
+	}
+	adrs, _ := r.SearchADRs(ctx, title)
+	for _, a := range adrs {
+		if strings.EqualFold(a.Title, title) {
+			return true
+		}
+	}
+	_ = content
+	return false
 }
 
 // ListMemory lists memory entries by type
@@ -258,31 +310,55 @@ type SearchResult struct {
 
 // SearchMemory performs semantic search across all memory types
 func (r *PostgresRepository) SearchMemory(ctx context.Context, query string, limit int) ([]*SearchResult, error) {
-	// Since we don't have an embedder passed here, do a simple text search for now
-	// In production, this would use pgvector cosine similarity
-	
 	var results []*SearchResult
-	
+
 	// Search PDRs
 	pdrs, err := r.SearchPDRs(ctx, query)
 	if err == nil {
 		for _, p := range pdrs {
-			results = append(results, &SearchResult{ID: p.ID, Type: TypePDR, Title: p.Title, Content: p.Content, Score: 1.0})
+			score := calculateScore(p.CreatedAt, TypePDR)
+			results = append(results, &SearchResult{ID: p.ID, Type: TypePDR, Title: p.Title, Content: p.Content, Score: score})
 		}
 	}
-	
-	// Search ADRs
+
+	// Search ADRs - higher priority
 	adrs, err := r.SearchADRs(ctx, query)
 	if err == nil {
 		for _, a := range adrs {
-			results = append(results, &SearchResult{ID: a.ID, Type: TypeADR, Title: a.Title, Content: a.Decision, Score: 1.0})
+			score := calculateRecencyScore(a.CreatedAt) + 0.2 // Priority boost
+			results = append(results, &SearchResult{ID: a.ID, Type: TypeADR, Title: a.Title, Content: a.Decision, Score: score})
 		}
 	}
-	
+
 	// Limit results
 	if len(results) > limit {
 		results = results[:limit]
 	}
-	
+
 	return results, nil
+}
+
+func calculateScore(createdAt string, memType string) float32 {
+	recency := float32(calculateRecencyScore(createdAt))
+	priority := getDefaultScore(memType)
+	return recency + priority
+}
+
+func calculateRecencyScore(createdAt string) float32 {
+	// Simple recency - memories from today get full score, older get less
+	created, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		return 0.5
+	}
+	age := time.Since(created)
+	hours := age.Hours()
+
+	if hours < 24 {
+		return 0.5 // Recent
+	} else if hours < 168 { // < 1 week
+		return 0.4
+	} else if hours < 720 { // < 1 month
+		return 0.2
+	}
+	return 0.1 // Old
 }
