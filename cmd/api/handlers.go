@@ -25,6 +25,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /memory", s.handleListMemory)
 	mux.HandleFunc("GET /memory/", s.handleGetMemory)
 	mux.HandleFunc("GET /memory/search", s.handleSearch)
+	mux.HandleFunc("POST /context/build", s.handleBuildContext)
 }
 
 func (s *Server) handleCreateMemory(w http.ResponseWriter, r *http.Request) {
@@ -145,4 +146,77 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
+}
+
+type ContextRequest struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit"`
+}
+
+type Source struct {
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+	Score  float32 `json:"score"`
+}
+
+type ContextResponse struct {
+	Query   string   `json:"query"`
+	Context string   `json:"context"`
+	Sources []Source `json:"sources"`
+}
+
+func (s *Server) handleBuildContext(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ContextRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Limit == 0 {
+		req.Limit = 10
+	}
+
+	// Retrieve relevant memory
+	results, err := s.repo.SearchMemory(r.Context(), req.Query, req.Limit)
+	if err != nil {
+		log.Printf("context search error: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Assemble context
+	var context strings.Builder
+	var sources []Source
+
+	// Group by type and build context
+	for _, res := range results {
+		sources = append(sources, Source{
+			Type:    res.Type,
+			Title:  res.Title,
+			Content: res.Content,
+			Score: res.Score,
+		})
+		context.WriteString(fmt.Sprintf("[%s: %s]\n%s\n\n", res.Type, res.Title, res.Content))
+	}
+
+	// Trim trailing whitespace
+	resp := ContextResponse{
+		Query:   req.Query,
+		Context: strings.TrimSpace(context.String()),
+		Sources: sources,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
