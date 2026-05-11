@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -31,14 +32,21 @@ func main() {
 	// Initialize database connection
 	db, err := database.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		l.Fatal(ctx, "failed to connect to database", "error", err)
+		fmt.Printf("DATABASE WARNING => %#v\n", err)
 	}
-	defer db.Close()
+	defer func() {
+		if db != nil {
+			db.Close()
+		}
+	}()
 
-	l.Info(ctx, "database connected successfully")
+	l.Info(ctx, "database ready")
 
 	// Initialize memory repository
-	repo := memory.NewPostgresRepository(db.Conn())
+	var repo *memory.PostgresRepository
+	if db != nil {
+		repo = memory.NewPostgresRepository(db.Conn())
+	}
 
 	// Initialize embeddings client
 	var embedder *embeddings.Client
@@ -61,8 +69,9 @@ func main() {
 
 	l.Info(ctx, "server ready", "port", port)
 	log.Printf("server listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil && err != http.ErrServerClosed {
-		l.Fatal(ctx, "server error", "error", err)
-	}
-	l.Info(ctx, "server shutdown complete")
+	err = http.ListenAndServe(":"+port, mux)
+
+	fmt.Printf("RAW ERROR => %#v\n", err)
+
+	panic(err)
 }
