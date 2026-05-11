@@ -61,7 +61,8 @@ func main() {
 
 	l.Info(ctx, "server ready", "port", port)
 	log.Printf("server listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("server error: %v", err)
+	if err := http.ListenAndServe(":"+port, mux); err != nil && err != http.ErrServerClosed {
+		l.Fatal(ctx, "server error", "error", err)
 	}
+	l.Info(ctx, "server shutdown complete")
 }

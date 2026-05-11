@@ -14,8 +14,7 @@ type DB struct {
 
 func New(ctx context.Context, dataSourceName string) (*DB, error) {
 	if dataSourceName == "" {
-		// Return a placeholder for now
-		return &DB{conn: nil}, nil
+		return nil, fmt.Errorf("DATABASE_URL is required but was empty")
 	}
 
 	conn, err := sql.Open("postgres", dataSourceName)

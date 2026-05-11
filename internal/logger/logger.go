@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -32,6 +33,7 @@ func (l *Logger) Error(ctx context.Context, msg string, keyvals ...interface{}) 
 
 func (l *Logger) Fatal(ctx context.Context, msg string, keyvals ...interface{}) {
 	l.log("FATAL", msg, keyvals)
+	os.Exit(1)
 }
 
 func (l *Logger) log(level, msg string, keyvals []interface{}) {
