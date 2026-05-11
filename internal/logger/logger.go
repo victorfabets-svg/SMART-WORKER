@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -42,8 +43,16 @@ func (l *Logger) log(level, msg string, keyvals []interface{}) {
 	if !l.shouldLog(level) {
 		return
 	}
-	
-	log.Printf("[%s] %s", level, msg)
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[%s] %s", level, msg))
+
+	// Append structured keyvals
+	for i := 0; i < len(keyvals)-1; i += 2 {
+		b.WriteString(fmt.Sprintf(" %v=%v", keyvals[i], keyvals[i+1]))
+	}
+
+	log.Println(b.String())
 }
 
 func (l *Logger) shouldLog(level string) bool {
