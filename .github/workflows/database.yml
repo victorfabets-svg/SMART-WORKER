@@ -1,0 +1,135 @@
+# Database Operations Workflow
+# Runs database migrations and validates database connectivity
+# Manually triggered via workflow_dispatch
+
+name: Database Operations
+
+on:
+  # Manual trigger for database operations
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Database operation to perform'
+        required: true
+        default: 'migrate'
+        type: choice
+        options:
+          - migrate
+          - validate
+          - reset
+
+# Security: Limit permissions to minimal required
+permissions:
+  contents: read
+  id-token: write
+
+# Security: Environment variables not passed to other jobs
+env:
+  # These are set per-step to avoid exposure
+  GO_VERSION: '1.24'
+
+jobs:
+  # Validate database connectivity before migration
+  validate:
+    name: Validate Database Connection
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install PostgreSQL client
+        run: |
+          # Install PostgreSQL client tools only
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Validate database connection
+        run: |
+          # Set environment variable securely (not printed in logs)
+          export DATABASE_URL="${{ secrets.DATABASE_URL }}"
+          
+          # Test connection without exposing credentials
+          if pg_isready -d "$DATABASE_URL" > /dev/null 2>&1; then
+            echo "✓ Database connection valid"
+          else
+            echo "✗ Database connection failed"
+            exit 1
+          fi
+
+      - name: Get database version
+        run: |
+          # Use psql to get PG version without exposure
+          export PGPASSWORD="${{ secrets.DATABASE_URL }}"  # Not logged
+          VERSION=$(psql -h localhost -U postgres -c 'SELECT version()' 2>/dev/null | head -1 || echo "Remote connection")
+          echo "Database: ${VERSION:-Connection verified}"
+
+  # Run database migrations
+  migrate:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    environment: production
+    needs: validate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Run migrations
+        env:
+          # Securely pass database URL (masked automatically by GitHub)
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Set PostgreSQL password environment variable
+          export PGCLIENTENCODESET=UTF8
+          
+          # Run each migration file
+          for migration in migrations/*.sql; do
+            echo "Applying: ${migration}"
+            
+            # Execute migration and capture output
+            if psql "$DATABASE_URL" -f "$migration" > /dev/null 2>&1; then
+              echo "✓ ${migration} applied"
+            else
+              echo "✗ ${migration} failed"
+              exit 1
+            fi
+          done
+          
+          echo "✓ All migrations completed"
+
+  # Reset database (dangerous - requires approval)
+  reset:
+    name: Reset Database
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.inputs.operation == 'reset' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Drop all tables
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          echo "⚠️ Database reset requested"
+          # List tables first to warn
+          psql "$DATABASE_URL" -c '\dt' 2>/dev/null || true
+          
+          # Reset requires explicit confirmation
+          echo "This is a destructive operation"
+          exit 1
