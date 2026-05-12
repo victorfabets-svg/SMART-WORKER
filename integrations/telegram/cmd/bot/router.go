@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	telegramcontext "github.com/aoms/smart-worker/integrations/telegram/context"
 )
 
 // AgentType the type of operational agent
@@ -25,11 +27,11 @@ type AgentResponse struct {
 
 // Router routes messages to appropriate agent
 type Router struct {
-	memory *OperationalMemory
+	memory *telegramcontext.OperationalMemory
 }
 
 // NewRouter creates a new router
-func NewRouter(mem *OperationalMemory) *Router {
+func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
 	return &Router{
 		memory: mem,
 	}
@@ -216,7 +218,7 @@ func (r *Router) handleExecutor(message string, intent string) AgentResponse {
 
 // handleRuntime handles runtime-specific queries
 func (r *Router) handleRuntime(message string, intent string) AgentResponse {
-	status, pid, running := r.memory.GetRuntimeStatus()
+	_, pid, running := r.memory.GetRuntimeStatus()
 
 	switch intent {
 	case "status", "summarize":

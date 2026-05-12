@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -80,7 +81,7 @@ func (m *OperationalMemory) LoadFromDisk() error {
 }
 
 func loadLatestFindings() ([]Finding, error) {
-	matches, _ := os.Glob("/tmp/auditor_findings_*.json")
+	matches, _ := filepath.Glob("/tmp/auditor_findings_*.json")
 	if len(matches) == 0 {
 		return nil, nil
 	}

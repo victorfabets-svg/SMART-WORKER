@@ -3,9 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -227,7 +225,7 @@ func loadFindings() []map[string]interface{} {
 
 func triggerExecutor(finding map[string]interface{}) {
 	title, _ := finding["title"].(string)
-	severity, _ := finding["severity"].(string)
+	_ , _ = finding["severity"].(string)
 
 	// Determine risk level
 	risk := classifyRisk(finding)
@@ -255,16 +253,16 @@ func triggerExecutor(finding map[string]interface{}) {
 			sendAlert(fmt.Sprintf("Executor failed for '%s': %v\n%s", title, err, output))
 		} else {
 			log.Printf("[RUNTIME] Executor completed: %s", title)
-			sendAlert(fmt.Sprintf("✅ Executor applied fix for: %s", title)))
+			sendAlert(fmt.Sprintf("✅ Executor applied fix for: %s", title))
 		}
 
 	case "medium":
 		log.Printf("[RUNTIME] MEDIUM risk - Approval required")
-		sendAlert(fmt.Sprintf("🔒 MEDIUM RISK: %s\nRequires approval", title)))
+		sendAlert(fmt.Sprintf("🔒 MEDIUM RISK: %s\nRequires approval", title))
 
 	case "high":
 		log.Printf("[RUNTIME] HIGH risk - BLOCKED")
-		sendAlert(fmt.Sprintf("🚫 HIGH RISK: %s\nBLOCKED - manual review required", title)))
+		sendAlert(fmt.Sprintf("🚫 HIGH RISK: %s\nBLOCKED - manual review required", title))
 	}
 
 	runtimeState.mu.Lock()
@@ -309,7 +307,7 @@ func handleUpdate(update tgbotapi.Update) {
 	}
 
 	command := update.Message.Command()
-	args := update.Message.CommandArguments()
+	_ = update.Message.CommandArguments()
 
 	log.Printf("[TELEGRAM] Command: %s", command)
 

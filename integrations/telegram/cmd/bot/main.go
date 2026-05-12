@@ -6,13 +6,37 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"SMART-WORKER/integrations/telegram/context"
+
+	telegramcontext "github.com/aoms/smart-worker/integrations/telegram/context"
 )
+
+// resolveRoot determines the SMART-WORKER root dynamically
+func resolveRoot() string {
+	if root := os.Getenv("SMART_WORKER_ROOT"); root != "" {
+		return root
+	}
+	execPath, err := os.Executable()
+	if err == nil {
+		absPath, _ := filepath.EvalSymlinks(execPath)
+		dir := filepath.Dir(absPath)
+		if strings.Contains(dir, "integrations/telegram") {
+			return filepath.Join(dir, "..", "..")
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		testPath := filepath.Join(cwd, "integrations", "telegram")
+		if _, err := os.Stat(testPath); err == nil {
+			return cwd
+		}
+	}
+	return "/workspace/project/SMART-WORKER"
+}
 
 // Runtime state for continuous operation
 type BotRuntime struct {
@@ -25,14 +49,21 @@ type BotRuntime struct {
 
 var botRuntime BotRuntime
 
-// Bot configuration
+// Bot configuration (initialized in init())
 var (
-	AUDITORS_PATH = "/workspace/project/SMART-WORKER/agents/auditor/run.sh"
-	EXECUTOR_PATH = "/workspace/project/SMART-WORKER/agents/executor/run.sh"
+	AUDITORS_PATH string
+	EXECUTOR_PATH string
 	STATE_FILE   = "/tmp/runtime_state.json"
-	ENV_FILE     = "/workspace/project/SMART-WORKER/integrations/telegram/.env"
-	TICKER_INTERVAL = 5 * time.Minute // 5-minute loop
+	ENV_FILE     string
+	TICKER_INTERVAL = 5 * time.Minute
 )
+
+func init() {
+	root := resolveRoot()
+	AUDITORS_PATH = filepath.Join(root, "agents", "auditor", "run.sh")
+	EXECUTOR_PATH = filepath.Join(root, "agents", "executor", "run.sh")
+	ENV_FILE = filepath.Join(root, "integrations", "telegram", ".env")
+}
 
 func main() {
 	// Load environment
@@ -61,7 +92,7 @@ func main() {
 	loadBotState()
 
 	// Load operational memory
-	mem := context.NewOperationalMemory()
+	mem := telegramcontext.NewOperationalMemory()
 	_ = mem.LoadFromDisk()
 
 	// Create router
@@ -71,7 +102,7 @@ func main() {
 	go runBotContinuousLoop(bot)
 
 	// Handle incoming messages - THIS IS THE CONVERSATIONAL LOOP
-	updateConfig := botapi.NewUpdate(0)
+	updateConfig := tgbotapi.NewUpdate(0)
 	updateConfig.Timeout = 60
 
 	updates := bot.GetUpdatesChan(updateConfig)
@@ -92,7 +123,7 @@ func main() {
 	}
 }
 
-func handleMessage(text string, router *Router, mem *OperationalMemory) string {
+func handleMessage(text string, router *Router, mem *telegramcontext.OperationalMemory) string {
 	text = strings.TrimSpace(text)
 
 	// Handle commands first
@@ -109,7 +140,7 @@ func handleMessage(text string, router *Router, mem *OperationalMemory) string {
 	return resp.Content
 }
 
-func handleCommand(text string, mem *OperationalMemory) string {
+func handleCommand(text string, mem *telegramcontext.OperationalMemory) string {
 	parts := strings.Fields(text)
 	command := parts[0]
 
@@ -156,7 +187,7 @@ NOT: execute code, modify repo`
 
 	case "/status":
 		_ = mem.LoadFromDisk()
-		status, pid, running := mem.GetRuntimeStatus()
+		_, pid, running := mem.GetRuntimeStatus()
 		content := "Runtime Status:\n"
 		if running {
 			content += fmt.Sprintf("Status: RUNNING (PID: %d)\n", pid)
@@ -207,7 +238,7 @@ func getEnv(key string) string {
 }
 
 func loadEnv() {
-	if data, err := os.ReadFile(ENV_FILE); err == nil {
+	if _, err := os.ReadFile(ENV_FILE); err == nil {
 		log.Printf("[BOT] Loaded environment from %s", ENV_FILE)
 	}
 }
@@ -264,7 +295,7 @@ func runBotScheduledAudit(bot *tgbotapi.BotAPI) {
 
 	// Run auditor
 	cmd := exec.Command("bash", AUDITORS_PATH)
-	cmd.Dir = "/workspace/project/SMART-WORKER"
+	cmd.Dir = resolveRoot()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("[BOT] Auditor error: %v", err)
@@ -408,7 +439,7 @@ func triggerBotExecutor(bot *tgbotapi.BotAPI, finding map[string]interface{}) {
 		os.WriteFile(tmpFile, findingJSON, 0644)
 
 		cmd := exec.Command("bash", EXECUTOR_PATH, "-f", tmpFile)
-		cmd.Dir = "/workspace/project/SMART-WORKER"
+		cmd.Dir = resolveRoot()
 		output, err := cmd.CombinedOutput()
 
 		if err != nil {
@@ -425,7 +456,7 @@ func triggerBotExecutor(bot *tgbotapi.BotAPI, finding map[string]interface{}) {
 
 	case "high":
 		log.Printf("[BOT] HIGH risk - BLOCKED")
-		sendAlert(bot, fmt.Sprintf("🚫 HIGH RISK: %s\nBLOCKED - manual review required", title)))
+		sendAlert(bot, fmt.Sprintf("HIGH RISK: %s - BLOCKED - manual review required", title))
 	}
 }
 

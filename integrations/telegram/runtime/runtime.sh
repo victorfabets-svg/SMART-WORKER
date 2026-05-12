@@ -3,10 +3,45 @@
 # BEATSET Continuous Runtime
 # Persistent operational loop for SMART-WORKER agents
 
-SCRIPT_DIR="/workspace/project/SMART-WORKER/integrations/telegram/runtime"
-RUNTIME_DIR="/workspace/project/SMART-WORKER"
-AUDITOR_SCRIPT="/workspace/project/SMART-WORKER/agents/auditor/run.sh"
-EXECUTOR_SCRIPT="/workspace/project/SMART-WORKER/agents/executor/run.sh"
+# Dynamic root resolution
+resolve_root() {
+  # Priority 1: SMART_WORKER_ROOT environment variable
+  if [ -n "$SMART_WORKER_ROOT" ]; then
+    echo "$SMART_WORKER_ROOT"
+    return
+  fi
+  
+  # Priority 2: Derive from script location
+  local script_path="${BASH_SOURCE[0]}"
+  if [ -n "$script_path" ]; then
+    local resolved=$(readlink -f "$script_path" 2>/dev/null)
+    local dir=$(dirname "$resolved")
+    # Go up from integrations/telegram/runtime to root
+    if [[ "$dir" == *"integrations/telegram/runtime" ]]; then
+      echo "$dir/../../.." | sed 's|/integrations/telegram/runtime||'
+      return
+    fi
+  fi
+  
+  # Priority 3: Current working directory
+  if [ -d "$(pwd)/integrations/telegram" ]; then
+    echo "$(pwd)"
+    return
+  fi
+  
+  # Fallback: fail
+  echo "ERROR: Cannot determine SMART_WORKER_ROOT. Set SMART_WORKER_ROOT env var." >&2
+  exit 1
+}
+
+# Resolve root once
+ROOT_DIR="$(resolve_root)"
+
+# Now set paths relative to dynamic root
+SCRIPT_DIR="$ROOT_DIR/integrations/telegram/runtime"
+RUNTIME_DIR="$ROOT_DIR"
+AUDITOR_SCRIPT="$ROOT_DIR/agents/auditor/run.sh"
+EXECUTOR_SCRIPT="$ROOT_DIR/agents/executor/run.sh"
 STATE_FILE="/tmp/runtime_state.json"
 PID_FILE="/tmp/runtime.pid"
 LOG_FILE="/tmp/runtime.log"
@@ -14,7 +49,7 @@ TICKER_INTERVAL=300
 FINDINGS_DIR="/tmp"
 
 # Load environment
-ENV_FILE="/workspace/project/SMART-WORKER/integrations/telegram/.env"
+ENV_FILE="$ROOT_DIR/integrations/telegram/.env"
 if [ -f "$ENV_FILE" ]; then
   while IFS="=" read -r key value; do
     [[ -z "$key" ]] && continue
