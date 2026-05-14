@@ -1,0 +1,24 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+RUN echo "=== STEP 1: PWD ===" && pwd && echo "=== STEP 2: ROOT LS ===" && ls -la
+
+COPY go.mod go.sum ./
+RUN echo "=== STEP 3: After COPY go.mod go.sum ===" && ls -la
+RUN go mod download
+
+COPY . .
+RUN echo "=== STEP 4: After COPY . ===" 
+RUN echo "=== Looking for types.go ===" && find . -name "types.go" -type f 2>/dev/null | head -5
+RUN echo "=== internal/memory/ ===" && ls -la internal/memory/
+RUN echo "=== types.go content ===" && head -20 internal/memory/types.go || echo "NOT FOUND"
+
+RUN echo "=== Building ===" && CGO_ENABLED=0 GOOS=linux go build -o /aoms ./cmd/api || (echo "=== Build failed, showing files ===" && find . -name "*.go" | head -20)
+
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates
+WORKDIR /app
+COPY --from=builder /aoms .
+EXPOSE 8080
+CMD ["./aoms"]
