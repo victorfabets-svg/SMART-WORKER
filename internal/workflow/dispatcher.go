@@ -37,7 +37,13 @@ type WorkflowRun struct {
 	Result     string    `json:"result,omitempty"`
 }
 
-// OperationalPayload is the payload sent to workflow
+// SimplifiedPayload - minimal inputs for autonomous workflow dispatch
+type SimplifiedPayload struct {
+	Task        string `json:"task"`
+	Repository string `json:"repository"`
+}
+
+// OperationalPayload kept for compatibility (deprecated)
 type OperationalPayload struct {
 	Task        string `json:"task"`
 	Repository string `json:"repository"`
@@ -80,27 +86,21 @@ func NewDispatcher() (*Dispatcher, error) {
 	}, nil
 }
 
-// Dispatch dispatches an operational workflow
-func (d *Dispatcher) Dispatch(payload OperationalPayload) (*WorkflowRun, error) {
+// DispatchSimplified - minimal payload, workflow auto-infers context
+func (d *Dispatcher) DispatchSimplified(task, repository string) (*WorkflowRun, error) {
 	if d.token == "" {
 		return nil, fmt.Errorf("GITHUB_TOKEN is required for workflow dispatch")
 	}
 	
-	// Create workflow dispatch request
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/actions/workflows/%s/dispatches",
 		d.owner, d.repo, d.workflowID)
 	
-	// Build request body
+	// Only task and repository - workflow auto-infers everything else
 	body := map[string]interface{}{
 		"ref": "main",
 		"inputs": map[string]interface{}{
-			"task":       payload.Task,
-			"repository": payload.Repository,
-			"context":    payload.Context,
-			"findings":  payload.Findings,
-			"roadmap":   payload.Roadmap,
-			"intent":    payload.Intent,
-			"urgency":   payload.Urgency,
+			"task":       task,
+			"repository": repository,
 		},
 	}
 	
@@ -139,7 +139,7 @@ func (d *Dispatcher) Dispatch(payload OperationalPayload) (*WorkflowRun, error) 
 	run := &WorkflowRun{
 		ID:         fmt.Sprintf("%d", result.RunID),
 		RunID:      result.RunID,
-		Task:      payload.Task,
+		Task:      task,
 		Status:    "queued",
 		CreatedAt: time.Now(),
 	}
@@ -149,6 +149,11 @@ func (d *Dispatcher) Dispatch(payload OperationalPayload) (*WorkflowRun, error) 
 	d.mu.Unlock()
 	
 	return run, nil
+}
+
+// Dispatch dispatches an operational workflow (backward compatible)
+func (d *Dispatcher) Dispatch(payload SimplifiedPayload) (*WorkflowRun, error) {
+	return d.DispatchSimplified(payload.Task, payload.Repository)
 }
 
 // GetRunStatus gets the status of a workflow run
