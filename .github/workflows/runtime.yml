@@ -1,0 +1,64 @@
+name: Runtime
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          
+      - name: Inject OpenHands API Key
+        run: |
+          echo "OPENHANDS_API_KEY=${{ secrets.OPENHANDS_API_KEY }}" >> $GITHUB_ENV
+          echo "Runtime environment configured"
+          
+      - name: Build runtime
+        run: go build -o /tmp/smart-worker-runtime ./cmd/api
+
+  telegram-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          
+      - name: Inject OpenHands API Key
+        run: |
+          echo "OPENHANDS_API_KEY=${{ secrets.OPENHANDS_API_KEY }}" >> $GITHUB_ENV
+          echo "Telegram runtime environment configured"
+          
+      - name: Build Telegram runtime
+        working-directory: ./integrations/telegram/runtime
+        run: go build -o /tmp/telegram-runtime .
+
+  executor-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          
+      - name: Inject OpenHands API Key
+        run: |
+          echo "OPENHANDS_API_KEY=${{ secrets.OPENHANDS_API_KEY }}" >> $GITHUB_ENV
+          echo "Executor runtime environment configured"
+          
+      - name: Build executor
+        run: go build -o /tmp/executor-runtime ./agents/executor

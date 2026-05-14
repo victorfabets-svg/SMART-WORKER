@@ -1,0 +1,207 @@
+name: Operational Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Operational task to execute'
+        required: true
+        type: string
+      repository:
+        description: 'Target repository (owner/repo)'
+        required: true
+        type: string
+      context:
+        description: 'Conversational context JSON'
+        required: false
+        type: string
+      findings:
+        description: 'Recent findings JSON'
+        required: false
+        type: string
+      roadmap:
+        description: 'Roadmap state'
+        required: false
+        type: string
+      intent:
+        description: 'Inferred intent (investigation|execution|planning|blocking)'
+        required: false
+        type: string
+        default: 'execution'
+      urgency:
+        description: 'Operational urgency (low|medium|high|critical)'
+        required: false
+        type: string
+        default: 'medium'
+
+env:
+  OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
+  GITHUB_REPOSITORY: ${{ github.event.inputs.repository }}
+  OPERATIONAL_TASK: ${{ github.event.inputs.task }}
+  INFERRED_INTENT: ${{ github.event.inputs.intent }}
+
+jobs:
+  operational-execution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.repository }}
+          fetch-depth: 0
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      
+      - name: Initialize OpenHands runtime
+        run: |
+          echo "=== Operational Runtime ==="
+          echo "Repository: ${{ github.event.inputs.repository }}"
+          echo "Task: ${{ github.event.inputs.task }}"
+          echo "Intent: ${{ github.event.inputs.intent }}"
+          echo "Urgency: ${{ github.event.inputs.urgency }}"
+          
+          if [ -n "$OPENHANDS_API_KEY" ]; then
+            echo "OpenHands: API Key configured"
+          else
+            echo "OpenHands: WARNING - No API Key configured"
+          fi
+      
+      - name: Analyze operational context
+        run: |
+          echo "=== Analyzing Context ==="
+          
+          # Parse findings if provided
+          if [ -n "${{ github.event.inputs.findings }}" ]; then
+            echo "Findings provided:"
+            echo '${{ github.event.inputs.findings }}' | jq -r '.[] | "  - [\(.severity)] \(.title)"' 2>/dev/null || echo '${{ github.event.inputs.findings }}'
+          else
+            echo "No findings provided"
+          fi
+          
+          # Analyze state
+          echo ""
+          echo "=== Repository State ==="
+          go version
+          ls -la *.go 2>/dev/null || echo "No Go files in root"
+          ls -la cmd/ 2>/dev/null || echo "No cmd directory"
+      
+      - name: Execute operational task
+        if: ${{ github.event.inputs.intent != 'investigation' }}
+        run: |
+          echo "=== Executing Operational Task ==="
+          
+          TASK="${{ github.event.inputs.task }}"
+          echo "Executing: $TASK"
+          
+          # Execute via OpenHands if API key available
+          if [ -n "$OPENHANDS_API_KEY" ]; then
+            echo "Using OpenHands for execution..."
+            
+            # Call OpenHands API
+            RESPONSE=$(curl -s -X POST \
+              "https://app.all-hands.dev/api/v1/app-conversations" \
+              -H "Authorization: Bearer $OPENHANDS_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "initial_message": {
+                  "content": [{"type": "text", "text": "'"$TASK"'"}]
+                },
+                "selected_repository": "'${{ github.event.inputs.repository }}'"
+              }' 2>&1) || true
+            
+            echo "OpenHands response: $RESPONSE"
+            
+            # Extract task ID if available
+            TASK_ID=$(echo "$RESPONSE" | jq -r '.id // empty' 2>/dev/null)
+            if [ -n "$TASK_ID" ]; then
+              echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "OpenHands not configured - simulating execution"
+            echo "Simulating task execution: $TASK"
+            
+            # Run basic analysis
+            echo "Analyzing repository..."
+           go build ./... 2>&1 | head -20 || true
+          fi
+      
+      - name: Run investigation only
+        if: ${{ github.event.inputs.intent == 'investigation' }}
+        run: |
+          echo "=== Investigation Mode ==="
+          echo "Analyzing without execution..."
+          
+          echo "=== Repository Analysis ==="
+          echo "Files:"
+          find . -name "*.go" -type f | head -20
+          
+          echo ""
+          echo "=== Go Module ==="
+          cat go.mod 2>/dev/null || echo "No go.mod"
+          
+          echo ""
+          echo "=== Build Check ==="
+          go build ./... 2>&1 | head -20 || true
+      
+      - name: Validate execution
+        if: ${{ github.event.inputs.intent != 'investigation' }}
+        run: |
+          echo "=== Validating Execution ==="
+          
+          # Build validation
+          echo "Building..."
+          if go build -o /tmp/smart-worker ./cmd/api 2>&1; then
+            echo "✅ Build successful"
+            echo "build=success" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Build failed"
+            echo "build=failed" >> $GITHUB_OUTPUT
+          fi
+          
+          # Test validation  
+          echo ""
+          echo "Testing..."
+          go test -v ./... 2>&1 | tail -30 || echo "Tests completed"
+      
+      - name: Synthesize operational result
+        id: synthesis
+        run: |
+          echo "=== Synthesizing Result ==="
+          
+          RESULT_FILE="/tmp/operational_result.json"
+          
+          # Build result JSON
+          echo '{"status": "completed"}' > "$RESULT_FILE"
+          
+          # Add files modified if available
+          if [ -f "/tmp/modified_files.txt" ]; then
+            FILES=$(cat /tmp/modified_files.txt | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            cat "$RESULT_FILE" | jq ".files_modified = $FILES" > "$RESULT_FILE.tmp"
+            mv "$RESULT_FILE.tmp" "$RESULT_FILE"
+          fi
+          
+          # Add validation status
+          BUILD_STATUS="${build:-unknown}"
+          echo "$RESULT_FILE" | jq ".validation = {\"build\": \"$BUILD_STATUS\"}" > "$RESULT_FILE.tmp"
+          mv "$RESULT_FILE.tmp" "$RESULT_FILE"
+          
+          # Output for workflow
+          cat "$RESULT_FILE"
+          echo "result=$RESULT_FILE" >> $GITHUB_OUTPUT
+      
+      - name: Report operational status
+        if: always()
+        run: |
+          echo "=== Operational Execution Complete ==="
+          echo "Status: ${{ github.event.inputs.intent }}"
+          echo "Repository: ${{ github.event.inputs.repository }}"
+          echo "Task: ${{ github.event.inputs.task }}"
+          
+          if [ -n "${{ steps.synthesis.outputs.result }}" ]; then
+            echo "Result: ${{ steps.synthesis.outputs.result }}"
+          fi
