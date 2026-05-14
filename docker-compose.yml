@@ -29,8 +29,35 @@ services:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/aoms?sslmode=disable
       PORT: 8080
       LOG_LEVEL: info
+      # OpenHands integration
+      OPENHANDS_API_KEY: ${OPENHANDS_API_KEY}
+      OPENHANDS_BASE_URL: ${OPENHANDS_BASE_URL:-https://app.all-hands.dev}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY}
+      # OpenAI (optional)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8080:8080"
+    volumes:
+      - .:/app
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aoms-telegram-bot
+    depends_on:
+      - api
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      # OpenHands integration
+      OPENHANDS_API_KEY: ${OPENHANDS_API_KEY}
+      OPENHANDS_BASE_URL: ${OPENHANDS_BASE_URL:-https://app.all-hands.dev}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY}
+      # Database
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/aoms?sslmode=disable
+      # Logging
+      LOG_LEVEL: info
     volumes:
       - .:/app
 

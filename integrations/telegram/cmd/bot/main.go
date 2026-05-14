@@ -67,9 +67,49 @@ func init() {
 }
 
 func main() {
-	// Load environment
+	// ==============================================================
+	// CRITICAL: Environment validation at startup
+	// ==============================================================
+	log.Printf("[BOOT] ================================================")
+	log.Printf("[BOOT] TELEGRAM CONVERSATIONAL RUNTIME STARTING")
+	log.Printf("[BOOT] ================================================")
+	
+	// Load environment from .env file FIRST
 	loadEnv()
-
+	
+	// CRITICAL: Validate OPENHANDS_API_KEY is available
+	apiKey := os.Getenv("OPENHANDS_API_KEY")
+	log.Printf("[BOOT] ================================================")
+	log.Printf("[BOOT] Environment Validation:")
+	log.Printf("[BOOT] OPENHANDS_API_KEY: len=%d", len(apiKey))
+	
+	if apiKey == "" {
+		log.Printf("[BOOT] FATAL: OPENHANDS_API_KEY NOT FOUND IN ENVIRONMENT")
+		log.Printf("[BOOT] ================================================")
+		log.Printf("[BOOT] Possible causes:")
+		log.Printf("[BOOT] 1. Not set in docker-compose environment:")
+		log.Printf("[BOOT]    environment:")
+		log.Printf("[BOOT]      - OPENHANDS_API_KEY: ${OPENHANDS_API_KEY}")
+		log.Printf("[BOOT] 2. Not set in shell environment before launch")
+		log.Printf("[BOOT] 3. .env file not loaded")
+		log.Printf("[BOOT] ================================================")
+		log.Printf("[BOOT] RUNTIME REFUSES TO START WITHOUT OPENHANDS_API_KEY")
+		log.Printf("[BOOT] ================================================")
+		
+		// CRITICAL: Fail fast - do not continue boot
+		panic("OPENHANDS_API_KEY environment variable is required but not found. aborting startup.")
+	}
+	
+	log.Printf("[BOOT] OPENHANDS_API_KEY: FOUND (length=%d)", len(apiKey))
+	log.Printf("[BOOT] ================================================")
+	
+	// Check other required env vars
+	if repo := os.Getenv("GITHUB_REPOSITORY"); repo != "" {
+		log.Printf("[BOOT] GITHUB_REPOSITORY: %s", repo)
+	} else {
+		log.Printf("[BOOT] GITHUB_REPOSITORY: not set (optional)")
+	}
+	
 	// Initialize bot
 	token := getEnv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
