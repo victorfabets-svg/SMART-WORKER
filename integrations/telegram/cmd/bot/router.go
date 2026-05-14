@@ -39,7 +39,9 @@ type Router struct {
 
 // NewRouter creates a new router
 func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
+	log.Printf("[ROUTER] ================================================")
 	log.Printf("[ROUTER] NewRouter ENTERED")
+	log.Printf("[ROUTER] ================================================")
 	
 	router := &Router{
 		memory: mem,
@@ -48,44 +50,61 @@ func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
 	// Initialize cognitive intent engine
 	if cognition, err := intent.NewCognitionEngine(); err == nil {
 		router.cognition = cognition
-		log.Printf("[ROUTER] cognition engine created")
+		log.Printf("[ROUTER] cognition engine created (not required)")
+	} else {
+		log.Printf("[ROUTER] cognition engine NOT created (optional)")
 	}
 	
 	// Initialize execution lifecycle
+	log.Printf("[ROUTER] Creating ExecutionLifecycle...")
 	if lifecycle, err := intent.NewExecutionLifecycle(); err == nil {
 		router.lifecycle = lifecycle
-		log.Printf("[ROUTER] lifecycle created, HasOpenHands: %v", lifecycle.HasOpenHands())
+		hasOH := lifecycle.HasOpenHands()
+		log.Printf("[ROUTER] lifecycle created, HasOpenHands: %v", hasOH)
+		
+		if !hasOH {
+			log.Printf("[ROUTER] WARNING: lifecycle created but OpenHands NOT available")
+			log.Printf("[ROUTER] This means OPENHANDS_API_KEY was not found in environment")
+		}
 	} else {
-		log.Printf("[ROUTER] lifecycle creation failed: %v", err)
+		log.Printf("[ROUTER] FATAL: lifecycle creation failed: %v", err)
 	}
 	
 	// Initialize workflow operational engine
 	router.workflow = workflow.NewEngine()
 	
+	log.Printf("[ROUTER] ================================================")
+	log.Printf("[ROUTER] Router initialization complete")
+	log.Printf("[ROUTER] lifecycle: %v, HasOpenHands: %v", 
+		router.lifecycle != nil, 
+		func() bool { 
+			if router.lifecycle != nil {
+				return router.lifecycle.HasOpenHands()
+			}
+			return false 
+		}())
+	log.Printf("[ROUTER] ================================================")
+	
 	return router
 }
 
-// Route routes a message to the appropriate agent using operational cognition
+// Route routes a message to the appropriate agent
+// CRITICAL: Must return REAL error if OpenHands not available - NO templates allowed
 func (r *Router) Route(message string) AgentResponse {
-	// Use lifecycle with OpenHands as primary path (doesn't require OPENAI_API_KEY)
-	if r.lifecycle != nil {
+	log.Printf("[ROUTER] Route ENTERED: message=%.50s", message)
+	
+	// If lifecycle with OpenHands is available, use it directly
+	if r.lifecycle != nil && r.lifecycle.HasOpenHands() {
+		log.Printf("[ROUTER] OpenHands available, using routeCognitively")
 		return r.routeCognitively(message)
 	}
 	
-	// Fallback to legacy routing
-	lower := strings.ToLower(message)
-	agent := r.detectAgent(lower)
-	intent := r.detectIntent(lower)
-
-	switch agent {
-	case AgentAuditor:
-		return r.handleAuditor(message, intent)
-	case AgentExecutor:
-		return r.handleExecutor(message, intent)
-	case AgentRuntime:
-		return r.handleRuntime(message, intent)
-	default:
-		return r.handleGeneral(message, intent)
+	// CRITICAL: OpenHands NOT available - return REAL error, NOT template
+	log.Printf("[ROUTER] CRITICAL: OpenHands NOT available - returning error")
+	return AgentResponse{
+		Agent:  AgentSystem,
+		Name:   "NO_OPENHANDS",
+		Content: "OpenHands is not configured. Please ensure OPENHANDS_API_KEY is available in the runtime environment.",
 	}
 }
 
@@ -161,41 +180,6 @@ func (r *Router) routeCognitively(message string) AgentResponse {
 	}
 }
 	
-	// Use operational workflow engine
-	var response string
-	var err error
-	
-	if r.workflow != nil {
-		response, err = r.workflow.HandleIntent(message, intentResult, repo)
-	} else if r.lifecycle != nil {
-		response, err = r.lifecycle.Execute(intentResult, message, repo)
-	} else {
-		// Complete fallback - NO procedural responses
-		if intentResult != nil && intentResult.ShouldExecute {
-			response = "Analyzing your request...\n\nThis would execute: " + message
-		} else if intentResult != nil && intentResult.Type == intent.IntentInvestigation {
-			response = "Analyzing the state...\n\n" + intentResult.Reasoning
-		} else if intentResult != nil && intentResult.Type == intent.IntentBlocking {
-			response = "Stopping execution..."
-		} else {
-			// Natural conversational response - NEVER procedural
-			response = "I understand: " + message + ".\n\nLet me analyze what you need."
-		}
-		err = nil
-	}
-	
-	// Add to history
-	if r.lifecycle != nil {
-		r.lifecycle.AddToHistory("user", message)
-		r.lifecycle.AddToHistory("assistant", response)
-	}
-	
-	return AgentResponse{
-		Agent:  AgentCognition,
-		Name:   "COGNITION",
-		Content: response,
-	}
-}
 
 // buildExecutionContext builds execution context from operational memory
 func (r *Router) buildExecutionContext() *intent.ExecutionContext {
