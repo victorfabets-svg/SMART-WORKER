@@ -50,15 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          
       - name: Inject OpenHands API Key
         run: |
           echo "OPENHANDS_API_KEY=${{ secrets.OPENHANDS_API_KEY }}" >> $GITHUB_ENV
           echo "Executor runtime environment configured"
           
-      - name: Build executor
-        run: go build -o /tmp/executor-runtime ./agents/executor
+      - name: Validate executor script
+        run: |
+          # Executor is a shell script, check it exists and is executable
+          ls -la ./agents/executor/run.sh
+          bash -n ./agents/executor/run.sh
+          echo "Executor script validated"

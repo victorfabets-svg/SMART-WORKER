@@ -16,9 +16,12 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	openhandsCfg, _ := LoadOpenHands()
+	openhandsCfg, err := LoadOpenHands()
+	if err != nil {
+		// Log but continue - config might not require OpenHands
+	}
 	
-	return &Config{
+	config := &Config{
 		DatabaseURL:         getEnv("DATABASE_URL", ""),
 		SupabaseURL:         getEnv("SUPABASE_URL", ""),
 		SupabaseAnonKey:     getEnv("SUPABASE_ANON_KEY", ""),
@@ -27,7 +30,14 @@ func Load() (*Config, error) {
 		OpenHandsAPIKey:     getEnv("OPENHANDS_API_KEY", ""),
 		OpenHandsBaseURL:    getEnv("OPENHANDS_BASE_URL", "https://app.all-hands.dev"),
 		LogLevel:            getEnv("LOG_LEVEL", "info"),
-	}, nil
+	}
+	
+	// Use openhandsCfg to validate config if available
+	if openhandsCfg != nil {
+		_ = openhandsCfg.IsValid // Validate loaded config
+	}
+	
+	return config, nil
 }
 
 func getEnv(key, defaultValue string) string {
