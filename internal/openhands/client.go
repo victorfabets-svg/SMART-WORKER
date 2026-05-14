@@ -78,6 +78,8 @@ func NewClientFromEnv() (*Client, error) {
 	baseURL := os.Getenv("OPENHANDS_BASE_URL")
 	repository := os.Getenv("OPENHANDS_REPOSITORY")
 	
+	log.Printf("[OPENHANDS] NewClientFromEnv: API_KEY set=%v, BASE_URL=%s", apiKey != "", baseURL)
+	
 	if baseURL == "" {
 		baseURL = "https://app.all-hands.dev"
 	}

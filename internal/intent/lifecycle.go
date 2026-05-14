@@ -39,15 +39,22 @@ type openhandsBridge struct {
 
 // NewExecutionLifecycle creates a new execution lifecycle manager
 func NewExecutionLifecycle() (*ExecutionLifecycle, error) {
+	log.Printf("[LIFECYCLE] NewExecutionLifecycle ENTERED")
+	
 	lc := &ExecutionLifecycle{
 		CancelChan: make(chan struct{}),
 	}
 	
 	// Try to create OpenHands client
 	client, err := openhands.NewClientFromEnv()
+	log.Printf("[LIFECYCLE] NewClientFromEnv returned: client=%v, err=%v", client, err)
+	
 	if err == nil && client != nil {
 		lc.client = client
 		lc.Bridge = &openhandsBridge{client: client}
+		log.Printf("[LIFECYCLE] OpenHands client assigned")
+	} else {
+		log.Printf("[LIFECYCLE] WARNING: OpenHands client NOT created - err=%v", err)
 	}
 	
 	return lc, nil
@@ -55,19 +62,70 @@ func NewExecutionLifecycle() (*ExecutionLifecycle, error) {
 
 // Execute handles the execution flow based on inferred intent
 func (lc *ExecutionLifecycle) Execute(intent *Intent, message string, repo string) (string, error) {
+	log.Printf("[LIFECYCLE] Execute ENTERED: message=%.50s, repo=%s", message, repo)
+	
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	
+	// If no intent provided, use fallback analysis to infer it
 	if intent == nil {
-		return "I need more context to understand what you'd like me to do. Can you clarify?", nil
+		// Use the fallback analysis pattern matching
+		lower := strings.ToLower(message)
+		
+		// Detect execution intent
+		executionTriggers := []string{"execute", "executar", "corrija", "fix", "apply", "corrigir", "rode", "rodar", "implemente", "faça", "fazer", "aplique"}
+		for _, t := range executionTriggers {
+			if strings.Contains(lower, t) && !strings.Contains(lower, "why") && !strings.Contains(lower, "just") {
+				intent = &Intent{
+					Type:    IntentExecution,
+					Task:    message,
+					ShouldExecute: true,
+				}
+				log.Printf("[LIFECYCLE] Intent inferred: Execution trigger='%s'", t)
+				break
+			}
+		}
+		
+		// Detect investigation intent
+		if intent == nil {
+			investigationTriggers := []string{"why", "explain", "what", "how", "show", "qual", "como", "oq", " Explique", "verifique", "check", "status", "estado"}
+			for _, t := range investigationTriggers {
+				if strings.Contains(lower, t) {
+					intent = &Intent{
+						Type:    IntentInvestigation,
+						Task:    message,
+						ShouldExecute: false,
+					}
+					log.Printf("[LIFECYCLE] Intent inferred: Investigation trigger='%s'", t)
+					break
+				}
+			}
+		}
+		
+		// Default to execution if unclear
+		if intent == nil {
+			intent = &Intent{
+				Type:    IntentExecution,
+				Task:    message,
+				ShouldExecute: true,
+			}
+			log.Printf("[LIFECYCLE] Intent inferred: default Execution")
+		}
 	}
+	
+	if intent == nil {
+		log.Printf("[LIFECYCLE] WARNING: intent still nil after inference!")
+		return "I'm ready to help. What would you like me to do?", nil
+	}
+	
+	log.Printf("[LIFECYCLE] dispatching intent.Type=%s, ShouldExecute=%v", intent.Type.String(), intent.ShouldExecute)
 	
 	switch intent.Type {
 	case IntentBlocking:
 		return lc.handleBlocking(intent, message)
 		
 	case IntentInvestigation:
-		return lc.handleInvestigation(intent, message)
+		return lc.handleInvestigation(intent, message, repo)
 		
 	case IntentExecution:
 		return lc.handleExecution(intent, message, repo)
@@ -104,9 +162,31 @@ func (lc *ExecutionLifecycle) handleBlocking(intent *Intent, message string) (st
 	return "Execution cancelled. What would you like me to do next?", nil
 }
 
-// handleInvestigation performs analysis only
-func (lc *ExecutionLifecycle) handleInvestigation(intent *Intent, message string) (string, error) {
-	// Analyze but do NOT execute
+// handleInvestigation sends query to OpenHands for analysis
+func (lc *ExecutionLifecycle) handleInvestigation(intent *Intent, message string, repo string) (string, error) {
+	// If OpenHands is configured, use it for analysis
+	if lc.client != nil {
+		taskDesc := "Analyze and explain: " + message
+		
+		timeout := 3 * time.Minute
+		result, err := lc.client.Dispatch(taskDesc, timeout)
+		
+		if err != nil {
+			return fmt.Sprintf("Analysis error: %v", err), nil
+		}
+		
+		if result != nil && result.Output != "" {
+			return result.Output, nil
+		}
+		
+		if result != nil && result.Status == "COMPLETED" {
+			return "Analysis completed. " + fmt.Sprintf("Files: %v", result.FilesModified), nil
+		}
+		
+		return fmt.Sprintf("Analysis status: %s", result.Status), nil
+	}
+	
+	// Fallback to procedural if no OpenHands
 	response := "Analyzing the current state...\n\n"
 	
 	if lc.ActiveTask != nil {
@@ -119,11 +199,16 @@ func (lc *ExecutionLifecycle) handleInvestigation(intent *Intent, message string
 	return response, nil
 }
 
-// handleExecution dispatches to OpenHands
+// handleExecution dispatches to OpenHands synchronously for chat responses
 func (lc *ExecutionLifecycle) handleExecution(intent *Intent, message string, repo string) (string, error) {
+	log.Printf("[LIFECYCLE] handleExecution ENTERED: message=%.50s", message)
+	
 	if lc.client == nil {
+		log.Printf("[LIFECYCLE] FATAL: lc.client is NIL - OPENHANDS_API_KEY not loaded!")
 		return "OpenHands execution is not configured. Please set OPENHANDS_API_KEY.", nil
 	}
+	
+	log.Printf("[LIFECYCLE] client exists, dispatching to OpenHands...")
 	
 	// Check if execution already in progress
 	if lc.ActiveTask != nil && (lc.ActiveTask.Status == "RUNNING" || lc.ActiveTask.Status == "IN_PROGRESS") {
@@ -136,20 +221,55 @@ func (lc *ExecutionLifecycle) handleExecution(intent *Intent, message string, re
 		taskDesc = message
 	}
 	
-	// Start execution
+	// Update task info
 	lc.IsCancelled = false
 	lc.ActiveTask = &TaskExecution{
 		ID:          "",
 		Intent:     intent,
 		Description: taskDesc,
-		Status:     "STARTING",
+		Status:     "RUNNING",
 		StartTime:  time.Now(),
 	}
 	
-	// Dispatch to OpenHands in background
-	go lc.dispatchExecution(taskDesc, repo)
+	// Execute SYNCHRONOUSLY (not async) to get LLM response for chat
+	// This replaces the async dispatch so Telegram gets real LLM responses
+	timeout := 10 * time.Minute
+	if intent.Urgency == "high" {
+		timeout = 5 * time.Minute
+	}
 	
-	return "Dispatching execution to OpenHands...\n\nI'll monitor the execution and report back.", nil
+	result, err := lc.client.Dispatch(taskDesc, timeout)
+	
+	// Update status
+	if err != nil {
+		lc.ActiveTask.Status = "FAILED"
+		return fmt.Sprintf("OpenHands execution error: %v", err), nil
+	}
+	
+	if result == nil {
+		lc.ActiveTask.Status = "FAILED"
+		return "No result from OpenHands execution", nil
+	}
+	
+	lc.ActiveTask.ID = result.TaskID
+	
+	if result.Status == "COMPLETED" {
+		lc.ActiveTask.Status = "COMPLETED"
+		// Return the actual output from OpenHands (LLM response)
+		if result.Output != "" {
+			return result.Output, nil
+		}
+		return fmt.Sprintf("Execution completed. Modified files: %v", result.FilesModified), nil
+	}
+	
+	if result.Status == "FAILED" {
+		lc.ActiveTask.Status = "FAILED"
+		return fmt.Sprintf("Execution failed: %s", result.Error), nil
+	}
+	
+	// Return current status
+	lc.ActiveTask.Status = result.Status
+	return fmt.Sprintf("Execution status: %s", result.Status), nil
 }
 
 // dispatchExecution handles async OpenHands dispatch
@@ -356,7 +476,12 @@ func (lc *ExecutionLifecycle) GetActiveExecution() *TaskExecution {
 
 // HasOpenHands returns true if OpenHands is configured
 func (lc *ExecutionLifecycle) HasOpenHands() bool {
-	return lc.client != nil
+	hasOpenHands := lc.client != nil
+	log.Printf("[LIFECYCLE] HasOpenHands() check: client=%v", hasOpenHands)
+	if lc.client != nil {
+		log.Printf("[LIFECYCLE] client is authorized: %v", lc.client.IsAuthorized())
+	}
+	return hasOpenHands
 }
 
 // FormatLifecycleStatus formats lifecycle status for display

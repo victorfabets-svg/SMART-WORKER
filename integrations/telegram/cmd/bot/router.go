@@ -39,6 +39,8 @@ type Router struct {
 
 // NewRouter creates a new router
 func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
+	log.Printf("[ROUTER] NewRouter ENTERED")
+	
 	router := &Router{
 		memory: mem,
 	}
@@ -46,11 +48,15 @@ func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
 	// Initialize cognitive intent engine
 	if cognition, err := intent.NewCognitionEngine(); err == nil {
 		router.cognition = cognition
+		log.Printf("[ROUTER] cognition engine created")
 	}
 	
 	// Initialize execution lifecycle
 	if lifecycle, err := intent.NewExecutionLifecycle(); err == nil {
 		router.lifecycle = lifecycle
+		log.Printf("[ROUTER] lifecycle created, HasOpenHands: %v", lifecycle.HasOpenHands())
+	} else {
+		log.Printf("[ROUTER] lifecycle creation failed: %v", err)
 	}
 	
 	// Initialize workflow operational engine
@@ -59,10 +65,10 @@ func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
 	return router
 }
 
-// Route routes a message to the appropriate agent using cognitive intent
+// Route routes a message to the appropriate agent using operational cognition
 func (r *Router) Route(message string) AgentResponse {
-	// Use cognitive intent inference instead of keyword matching
-	if r.cognition != nil && r.lifecycle != nil {
+	// Use lifecycle with OpenHands as primary path (doesn't require OPENAI_API_KEY)
+	if r.lifecycle != nil {
 		return r.routeCognitively(message)
 	}
 	
@@ -83,8 +89,11 @@ func (r *Router) Route(message string) AgentResponse {
 	}
 }
 
-// routeCognitively uses LLM-driven intent cognition and workflow execution
+// routeCognitively uses intent cognition and workflow execution
+// When OpenHands is configured, messages are sent directly to OpenHands LLM
 func (r *Router) routeCognitively(message string) AgentResponse {
+	log.Printf("[ROUTER] routeCognitively ENTERED with message: %s", message)
+	
 	// Build execution context from memory
 	ctx := r.buildExecutionContext()
 	
@@ -92,34 +101,65 @@ func (r *Router) routeCognitively(message string) AgentResponse {
 	var history []intent.Message
 	if r.lifecycle != nil {
 		history = r.lifecycle.GetHistory(5)
+		log.Printf("[ROUTER] lifecycle available, history length: %d", len(history))
+	} else {
+		log.Printf("[ROUTER] WARNING - r.lifecycle is NIL")
 	}
 	
-	// Build context for cognition
-	execCtx := &intent.ExecutionContext{
-		Repository: os.Getenv("GITHUB_REPOSITORY"),
-		Operational_state: r.workflow.GetStatus(),
+	// Check if OpenHands is configured - if so, use it directly for responses
+	if r.lifecycle != nil && r.lifecycle.HasOpenHands() {
+		log.Printf("[ROUTER] OpenHands IS configured, dispatching...")
+		
+		repo := os.Getenv("GITHUB_REPOSITORY")
+		if repo == "" {
+			repo = "aoms/smart-worker"
+		}
+		
+		// Try to execute via OpenHands dispatch
+		response, err := r.lifecycle.Execute(nil, message, repo)
+		log.Printf("[ROUTER] lifecycle.Execute returned, response: %.100s, err: %v", response, err)
+		
+		if err == nil && response != "" {
+			// Add to history
+			r.lifecycle.AddToHistory("user", message)
+			r.lifecycle.AddToHistory("assistant", response)
+			
+			return AgentResponse{
+				Agent:  AgentCognition,
+				Name:   "OPENHANDS",
+				Content: response,
+			}
+		}
+		
+		// Error case - should NOT fallback to templates
+		if err != nil {
+			log.Printf("[ROUTER] ERROR - lifecycle failed: %v", err)
+			return AgentResponse{
+				Agent:  AgentCognition,
+				Name:   "ERROR",
+				Content: fmt.Sprintf("OpenHands dispatch error: %v", err),
+			}
+		}
+		if response == "" {
+			log.Printf("[ROUTER] WARNING - lifecycle returned empty response")
+			return AgentResponse{
+				Agent:  AgentCognition,
+				Name:   "EMPTY",
+				Content: "OpenHands returned empty response",
+			}
+		}
+	} else {
+		log.Printf("[ROUTER] WARNING - OpenHands NOT configured or HasOpenHands() returns false")
 	}
 	
-	// Convert history
-	for _, msg := range history {
-		execCtx.ConversationalHistory = append(execCtx.ConversationalHistory, intent.Message{
-			Role: msg.Role,
-			Content: msg.Content,
-			Time: msg.Time,
-		})
+	// FINAL CHECK: If no usable OpenHands, return REAL error - NOT template
+	log.Printf("[ROUTER] FINAL: OpenHands not available")
+	return AgentResponse{
+		Agent:  AgentCognition,
+		Name:   "NO_OPENHANDS",
+		Content: "OpenHands is not configured. Please set OPENHANDS_API_KEY environment variable.",
 	}
-	
-	// Infer intent using cognition engine
-	var intentResult *intent.Intent
-	if r.cognition != nil {
-		intentResult, _ = r.cognition.InferWithContext(message, execCtx)
-	}
-	
-	// Get repository
-	repo := os.Getenv("GITHUB_REPOSITORY")
-	if repo == "" {
-		repo = "aoms/smart-worker"
-	}
+}
 	
 	// Use operational workflow engine
 	var response string

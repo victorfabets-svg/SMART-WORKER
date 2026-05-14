@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -97,6 +98,29 @@ func main() {
 
 	// Create router
 	router := NewRouter(mem)
+	
+	// Log startup environment status
+	log.Printf("[BOOT] ================================================")
+	log.Printf("[BOOT] Telegram Conversational Runtime Starting")
+	log.Printf("[BOOT] ================================================")
+	
+	// Check OPENHANDS_API_KEY availability
+	apiKey := os.Getenv("OPENHANDS_API_KEY")
+	if apiKey != "" {
+		log.Printf("[BOOT] OPENHANDS_API_KEY detected: YES (length=%d)", len(apiKey))
+	} else {
+		log.Printf("[BOOT] OPENHANDS_API_KEY detected: NO")
+	}
+	
+	// Check if lifecycle has OpenHands
+	if router.lifecycle != nil {
+		hasOH := router.lifecycle.HasOpenHands()
+		log.Printf("[BOOT] OpenHands enabled: %v", hasOH)
+	} else {
+		log.Printf("[BOOT] Lifecycle: not created")
+	}
+	
+	log.Printf("[BOOT] ================================================")
 
 	// Start continuous audit loop in background
 	go runBotContinuousLoop(bot)
@@ -238,9 +262,85 @@ func getEnv(key string) string {
 }
 
 func loadEnv() {
-	if _, err := os.ReadFile(ENV_FILE); err == nil {
-		log.Printf("[BOT] Loaded environment from %s", ENV_FILE)
+	log.Printf("[BOT] ================================================")
+	log.Printf("[BOT] Loading Environment Configuration")
+	log.Printf("[BOT] ================================================")
+	
+	// FIRST: Check what environment variables are ALREADY available
+	debugEnvVars := []string{
+		"OPENHANDS_API_KEY",
+		"TELEGRAM_BOT_TOKEN",
+		"GITHUB_REPOSITORY",
+		"OPENHANDS_BASE_URL",
 	}
+	for _, key := range debugEnvVars {
+		if val := os.Getenv(key); val != "" {
+			log.Printf("[BOT] %s: set (length=%d)", key, len(val))
+		} else {
+			log.Printf("[BOT] %s: NOT set", key)
+		}
+	}
+	
+	// THEN: Load .env file if present (but prefer existing environment vars)
+	if data, err := os.ReadFile(ENV_FILE); err == nil {
+		log.Printf("[BOT] Reading .env from: %s", ENV_FILE)
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			// Skip comments and empty lines
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			// Parse KEY=VALUE
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				
+				// Skip if key starts with $ (it's a reference to itself)
+				if strings.HasPrefix(value, "$") && strings.Contains(value, key) {
+					// This is a self-reference like KEY=${KEY}, skip
+					continue
+				}
+				
+				// Check if already set in environment - prefer that
+				if existing, exists := os.LookupEnv(key); exists && existing != "" {
+					// Already set, skip .env value
+					continue
+				}
+				
+				// Try to resolve ${VAR} from environment
+				re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+				matches := re.FindAllStringSubmatch(value, -1)
+				for _, match := range matches {
+					if len(match) == 2 {
+						envKey := match[1]
+						envVal := os.Getenv(envKey)
+						if envVal != "" {
+							value = strings.ReplaceAll(value, match[0], envVal)
+						}
+					}
+				}
+				
+				// Set if we have a value
+				if value != "" {
+					os.Setenv(key, value)
+					log.Printf("[BOT] Set from .env: %s", key)
+				}
+			}
+		}
+	} else {
+		log.Printf("[BOT] No .env file at %s (this is OK)", ENV_FILE)
+	}
+	
+	// FINAL: Debug check after loading
+	log.Printf("[BOT] ================================================")
+	log.Printf("[BOT] Final Environment State:")
+	if apiKey := os.Getenv("OPENHANDS_API_KEY"); apiKey != "" {
+		log.Printf("[BOT] OPENHANDS_API_KEY: AVAILABLE (length=%d)", len(apiKey))
+	} else {
+		log.Printf("[BOT] OPENHANDS_API_KEY: NOT AVAILABLE")
+	}
+	log.Printf("[BOT] ================================================")
 }
 
 func loadBotState() {
