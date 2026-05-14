@@ -60,6 +60,13 @@ func main() {
 	// Load environment variables
 	loadEnv()
 
+	// Initialize OpenHands runtime (with authentication if configured)
+	log.Printf("[RUNTIME] %s", initOpenHandsRuntime())
+	
+	// Log readiness status
+	readiness := checkOpenHandsReadiness()
+	log.Printf("[RUNTIME] OpenHands readiness: %v", readiness)
+
 	// Initialize bot
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {

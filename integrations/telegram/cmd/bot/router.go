@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	telegramcontext "github.com/aoms/smart-worker/integrations/telegram/context"
+	"github.com/aoms/smart-worker/internal/intent"
+	"github.com/aoms/smart-worker/internal/workflow"
 )
 
 // AgentType the type of operational agent
@@ -16,6 +19,7 @@ const (
 	AgentExecutor
 	AgentRuntime
 	AgentSystem
+	AgentCognition // New cognitive agent
 )
 
 // AgentResponse response from an agent
@@ -25,20 +29,44 @@ type AgentResponse struct {
 	Content string
 }
 
-// Router routes messages to appropriate agent
+// Router routes messages to appropriate agent using operational cognition
 type Router struct {
-	memory *telegramcontext.OperationalMemory
+	memory     *telegramcontext.OperationalMemory
+	cognition *intent.CognitionEngine
+	lifecycle *intent.ExecutionLifecycle
+	workflow  *workflow.Engine
 }
 
 // NewRouter creates a new router
 func NewRouter(mem *telegramcontext.OperationalMemory) *Router {
-	return &Router{
+	router := &Router{
 		memory: mem,
 	}
+	
+	// Initialize cognitive intent engine
+	if cognition, err := intent.NewCognitionEngine(); err == nil {
+		router.cognition = cognition
+	}
+	
+	// Initialize execution lifecycle
+	if lifecycle, err := intent.NewExecutionLifecycle(); err == nil {
+		router.lifecycle = lifecycle
+	}
+	
+	// Initialize workflow operational engine
+	router.workflow = workflow.NewEngine()
+	
+	return router
 }
 
-// Route routes a message to the appropriate agent
+// Route routes a message to the appropriate agent using cognitive intent
 func (r *Router) Route(message string) AgentResponse {
+	// Use cognitive intent inference instead of keyword matching
+	if r.cognition != nil && r.lifecycle != nil {
+		return r.routeCognitively(message)
+	}
+	
+	// Fallback to legacy routing
 	lower := strings.ToLower(message)
 	agent := r.detectAgent(lower)
 	intent := r.detectIntent(lower)
@@ -55,10 +83,109 @@ func (r *Router) Route(message string) AgentResponse {
 	}
 }
 
+// routeCognitively uses LLM-driven intent cognition and workflow execution
+func (r *Router) routeCognitively(message string) AgentResponse {
+	// Build execution context from memory
+	ctx := r.buildExecutionContext()
+	
+	// Get conversational history
+	var history []intent.Message
+	if r.lifecycle != nil {
+		history = r.lifecycle.GetHistory(5)
+	}
+	
+	// Build context for cognition
+	execCtx := &intent.ExecutionContext{
+		Repository: os.Getenv("GITHUB_REPOSITORY"),
+		Operational_state: r.workflow.GetStatus(),
+	}
+	
+	// Convert history
+	for _, msg := range history {
+		execCtx.ConversationalHistory = append(execCtx.ConversationalHistory, intent.Message{
+			Role: msg.Role,
+			Content: msg.Content,
+			Time: msg.Time,
+		})
+	}
+	
+	// Infer intent using cognition engine
+	var intentResult *intent.Intent
+	if r.cognition != nil {
+		intentResult, _ = r.cognition.InferWithContext(message, execCtx)
+	}
+	
+	// Get repository
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if repo == "" {
+		repo = "aoms/smart-worker"
+	}
+	
+	// Use operational workflow engine
+	var response string
+	var err error
+	
+	if r.workflow != nil {
+		response, err = r.workflow.HandleIntent(message, intentResult, repo)
+	} else if r.lifecycle != nil {
+		response, err = r.lifecycle.Execute(intentResult, message, repo)
+	} else {
+		// Complete fallback - NO procedural responses
+		if intentResult != nil && intentResult.ShouldExecute {
+			response = "Analyzing your request...\n\nThis would execute: " + message
+		} else if intentResult != nil && intentResult.Type == intent.IntentInvestigation {
+			response = "Analyzing the state...\n\n" + intentResult.Reasoning
+		} else if intentResult != nil && intentResult.Type == intent.IntentBlocking {
+			response = "Stopping execution..."
+		} else {
+			// Natural conversational response - NEVER procedural
+			response = "I understand: " + message + ".\n\nLet me analyze what you need."
+		}
+		err = nil
+	}
+	
+	// Add to history
+	if r.lifecycle != nil {
+		r.lifecycle.AddToHistory("user", message)
+		r.lifecycle.AddToHistory("assistant", response)
+	}
+	
+	return AgentResponse{
+		Agent:  AgentCognition,
+		Name:   "COGNITION",
+		Content: response,
+	}
+}
+
+// buildExecutionContext builds execution context from operational memory
+func (r *Router) buildExecutionContext() *intent.ExecutionContext {
+	ctx := &intent.ExecutionContext{
+		Repository: os.Getenv("GITHUB_REPOSITORY"),
+	}
+	
+	// Get operational state from memory
+	if r.memory != nil {
+		_ = r.memory.LoadFromDisk()
+		ctx.Operational_state = "active"
+		
+		// Get findings
+		findings := r.memory.GetLatestFindings()
+		for _, f := range findings {
+			ctx.RecentFindings = append(ctx.RecentFindings, intent.Finding{
+				Title:    f.Title,
+				Severity: f.Severity,
+				Evidence: f.Evidence,
+			})
+		}
+	}
+	
+	return ctx
+}
+
 // detectAgent detects which agent to route to
 func (r *Router) detectAgent(message string) AgentType {
 	auditorTriggers := []string{"auditor", "audit", "finding", "bug", "error", "explain"}
-	executorTriggers := []string{"executor", "execute", "fix", "apply", "why blocked", "didn't fix", "blocked"}
+	executorTriggers := []string{"executor", "execute", "fix", "apply", "why blocked", "didn't fix", "blocked", "run", "corrija", "execute task"}
 	runtimeTriggers := []string{"runtime", "status", "running", "loop", "ticker", "alive"}
 
 	for _, t := range auditorTriggers {
@@ -162,6 +289,17 @@ func (r *Router) handleAuditor(message string, intent string) AgentResponse {
 
 // handleExecutor handles executor-specific queries
 func (r *Router) handleExecutor(message string, intent string) AgentResponse {
+	// Check if this is an execution request that should be dispatched to OpenHands
+	lower := strings.ToLower(message)
+	executionTriggers := []string{"corrija", "execute", "execute task", "run task", "fix", "apply fix"}
+	
+	for _, t := range executionTriggers {
+		if strings.Contains(lower, t) && !strings.Contains(lower, "why") && !strings.Contains(lower, "blocked") {
+			// This is an execution request - dispatch to OpenHands
+			return r.handleOpenHandsExecution(message)
+		}
+	}
+	
 	decisions := r.memory.GetExecutorDecisions()
 	blocked := r.memory.GetBlockedOperations()
 
@@ -241,17 +379,51 @@ func (r *Router) handleRuntime(message string, intent string) AgentResponse {
 	}
 }
 
-// handleGeneral handles general queries
+// handleGeneral removes all procedural responses - uses pure cognition
 func (r *Router) handleGeneral(message string, intent string) AgentResponse {
-	_ = r.memory.LoadFromDisk()
+	// ALWAYS use cognitive routing - NEVER procedural
+	return r.routeCognitively(message)
+}
 
-	content := "[SYSTEM]\n\n"
-	content += "Available agents:\n"
-	content += "- auditor: Explain/summarize findings\n"
-	content += "- executor: Explain blocked operations\n"
-	content += "- runtime: Show runtime status\n"
-	content += "\nCommands: /audit /findings /status\n"
-	content += "\nOr talk naturally: 'auditor, explain this error'"
-
-	return AgentResponse{Agent: AgentSystem, Name: "SYSTEM", Content: content}
+// handleOpenHandsExecution handles execution requests via OpenHands
+func (r *Router) handleOpenHandsExecution(message string) AgentResponse {
+	// Create OpenHands bridge
+	bridge, err := NewOpenHandsBridge()
+	if err != nil {
+		return AgentResponse{
+			Agent:  AgentExecutor,
+			Name:   "EXECUTOR",
+			Content: fmt.Sprintf("OpenHands initialization error: %v", err),
+		}
+	}
+	
+	if !bridge.IsAuthorized() {
+		return AgentResponse{
+			Agent:  AgentExecutor,
+			Name:   "EXECUTOR",
+			Content: "OpenHands execution not authorized. Please configure OPENHANDS_API_KEY.",
+		}
+	}
+	
+	// Get repository from environment
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if repo == "" {
+		repo = "aoms/smart-worker"
+	}
+	
+	// Dispatch to OpenHands
+	result, err := bridge.Execute(message, repo)
+	if err != nil {
+		return AgentResponse{
+			Agent:  AgentExecutor,
+			Name:   "EXECUTOR",
+			Content: fmt.Sprintf("Execution failed: %v", err),
+		}
+	}
+	
+	return AgentResponse{
+		Agent:  AgentExecutor,
+		Name:   "EXECUTOR",
+		Content: "Dispatching execution to OpenHands...\n\n" + result,
+	}
 }

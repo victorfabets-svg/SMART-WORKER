@@ -17,6 +17,13 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      - name: Inject OpenHands API Key
+        run: |
+          if [ -n "${{ secrets.OPENHANDS_API_KEY }}" ]; then
+            echo "OPENHANDS_API_KEY=${{ secrets.OPENHANDS_API_KEY }}" >> $GITHUB_ENV
+            echo "OpenHands API Key configured"
+          fi
+
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       - run: psql "$DATABASE_URL" -c "SELECT 1;"
