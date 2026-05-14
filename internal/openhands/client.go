@@ -115,6 +115,13 @@ func (c *Client) ValidateAuth() error {
 
 // StartExecution starts a new execution task
 func (c *Client) StartExecution(taskDescription string) (*ExecutionResult, error) {
+	log.Printf("[OPENHANDS] ================================================")
+	log.Printf("[OPENHANDS] dispatch START")
+	log.Printf("[OPENHANDS] task: %.100s...", taskDescription)
+	log.Printf("[OPENHANDS] repository: %s", c.Repository)
+	log.Printf("[OPENHANDS] endpoint: %s/api/v1/app-conversations", c.baseURL)
+	log.Printf("[OPENHANDS] ================================================")
+	
 	reqBody := StartTaskRequest{
 		InitialMessage: MessageContent{
 			Type: "text",
@@ -128,6 +135,8 @@ func (c *Client) StartExecution(taskDescription string) (*ExecutionResult, error
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	
+	log.Printf("[OPENHANDS] request payload size: %d bytes", len(jsonBody))
+	
 	req, err := http.NewRequest("POST", c.baseURL+"/api/v1/app-conversations", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -136,31 +145,48 @@ func (c *Client) StartExecution(taskDescription string) (*ExecutionResult, error
 	c.setAuthHeader(req)
 	req.Header.Set("Content-Type", "application/json")
 	
+	log.Printf("[OPENHANDS] sending HTTP request...")
+	startTime := time.Now()
+	
 	resp, err := c.httpClient.Do(req)
+	latency := time.Since(startTime)
+	log.Printf("[OPENHANDS] HTTP response received, latency: %v", latency)
+	
 	if err != nil {
+		log.Printf("[OPENHANDS] FATAL: HTTP request failed: %v", err)
 		return nil, fmt.Errorf("failed to start execution: %w", err)
 	}
 	defer resp.Body.Close()
 	
+	log.Printf("[OPENHANDS] response status: %d", resp.StatusCode)
+	
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("[OPENHANDS] FATAL: failed to read response body: %v", err)
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	
+	log.Printf("[OPENHANDS] response body size: %d bytes", len(body))
+	
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		log.Printf("[OPENHANDS] FATAL: status %d, body: %.200s", resp.StatusCode, string(body))
 		return nil, fmt.Errorf("failed to start execution: status %d, body: %s", resp.StatusCode, string(body))
 	}
 	
 	var startResp StartTaskResponse
 	if err := json.Unmarshal(body, &startResp); err != nil {
+		log.Printf("[OPENHANDS] FATAL: failed to parse response JSON: %v", err)
+		log.Printf("[OPENHANDS] raw response: %.200s", string(body))
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
+	
+	log.Printf("[OPENHANDS] task started, ID: %s", startResp.ID)
 	
 	return &ExecutionResult{
 		TaskID:     startResp.ID,
 		Status:     startResp.Status,
+		Repository: c.Repository,
 	}, nil
-}
 
 // GetExecutionStatus polls for execution status
 func (c *Client) GetExecutionStatus(taskID string) (*ExecutionResult, error) {
