@@ -3,5 +3,6 @@
 docs
 agents
 migrations
-.go
+.go/
 testdata
+.go
